@@ -28,9 +28,12 @@ def main():
         print("epoch {}".format(epoch))
         for ix, jy, n in zip(cooc.row, cooc.col, cooc.data):
 
-			# fill in your SGD code here, 
-			# for the update resulting from co-occurence (i,j)
-		
+            logn = np.log(n)
+            fn = min(1.0, (n / nmax) ** alpha)
+            x, y = xs[ix, :], ys[jy, :]
+            scale = 2 * eta * fn * (logn - np.dot(x, y))
+            xs[ix, :] += scale * y
+            ys[jy, :] += scale * x
 
     np.save('embeddings', xs)
 
