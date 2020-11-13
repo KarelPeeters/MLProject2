@@ -24,6 +24,7 @@ def read_tweets(path: str, max_count: Optional[int]) -> [str]:
 
 def select_words(tweets, max_word_count: Optional[int]) -> [str]:
     """Select the `max_word_count` most common words in the given tweets"""
+    # TODO maybe filter out common words and punctuation
     word_counts = Counter()
     for tweet in tweets:
         for word in tweet.split(" "):
@@ -51,6 +52,7 @@ def tweet_as_tokens(tweet: str, words: [str]):
 def construct_cooc(tweets, words) -> scipy.sparse.coo_matrix:
     """Build a sparse co-occurrence matrix"""
     # TODO it should be possible to make this function a lot faster
+    # TODO maybe limit the max distance between words counted as co-occuring, both for semantics and performance
     row = []
     col = []
     data = []
