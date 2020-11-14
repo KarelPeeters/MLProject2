@@ -22,13 +22,21 @@ def read_tweets(path: str, max_count: Optional[int]) -> [str]:
     return result
 
 
-def select_words(tweets, max_word_count: Optional[int]) -> [str]:
+def select_words(tweets, max_word_count: Optional[int], filter_punctuation: bool) -> [str]:
     """Select the `max_word_count` most common words in the given tweets"""
     # TODO maybe filter out common words and punctuation
     word_counts = Counter()
     for tweet in tweets:
         for word in tweet.split(" "):
             word_counts[word] += 1
+
+    if filter:
+        filtered_word_counts = dict()
+        for word, count in word_counts.items():
+            contains_letter = any('a' <= letter <= 'z' for letter in word)
+            if contains_letter:
+                filtered_word_counts[word] = count
+        word_counts = Counter(filtered_word_counts)
 
     selection = word_counts.most_common(max_word_count) if max_word_count is not None else word_counts.items()
     min_occurrences = min(pair[1] for pair in selection)
@@ -39,32 +47,33 @@ def select_words(tweets, max_word_count: Optional[int]) -> [str]:
     return words
 
 
-def tweet_as_tokens(tweet: str, words: [str]):
+def tweet_as_tokens(tweet: str, word_dict: dict):
     """Convert a tweet into a list of word indices"""
     tokens = []
     for word in tweet.split(" "):
-        index = bisect.bisect(words, word)
-        if index > 0 and words[index - 1] == word:
-            tokens.append(index - 1)
+        index = word_dict.get(word, None)
+        if index is not None:
+            tokens.append(index)
     return tokens
 
 
-def construct_cooc(tweets, words) -> scipy.sparse.coo_matrix:
+def construct_cooc(tweets: [str], word_dict: dict) -> scipy.sparse.coo_matrix:
     """Build a sparse co-occurrence matrix"""
-    # TODO it should be possible to make this function a lot faster
-    # TODO maybe limit the max distance between words counted as co-occuring, both for semantics and performance
-    row = []
-    col = []
-    data = []
+    # TODO it should be possible to make this function a lot faster, maybe not in python though
+    # TODO maybe limit the max distance between words counted as co-occurring, both for semantics and performance
+    counter = Counter()
+
     for tweet in tweets:
-        tokens = tweet_as_tokens(tweet, words)
+        tokens = tweet_as_tokens(tweet, word_dict)
         for t0 in tokens:
             for t1 in tokens:
-                row.append(t0)
-                col.append(t1)
-                data.append(1)
+                counter[(t0, t1)] += 1
+
+    row = np.fromiter((pair[0] for pair in counter), dtype=int, count=len(counter))
+    col = np.fromiter((pair[1] for pair in counter), dtype=int, count=len(counter))
+    data = np.fromiter((x for x in counter.values()), dtype=int, count=len(counter))
     cooc = scipy.sparse.coo_matrix((data, (row, col)))
-    cooc.sum_duplicates()
+
     return cooc
 
 
@@ -113,17 +122,21 @@ def main():
     print("Reading tweets")
     tweets_pos = read_tweets("../data/twitter-datasets/train_pos_full.txt", MAX_TWEET_COUNT)
     tweets_neg = read_tweets("../data/twitter-datasets/train_neg_full.txt", MAX_TWEET_COUNT)
+    # TODO maybe it's better to shuffle this for word embeddings
     tweets = tweets_pos + tweets_neg
 
     print("Selecting words")
-    words = select_words(tweets, MAX_WORD_COUNT)
+    words = select_words(tweets, MAX_WORD_COUNT, filter_punctuation=True)
+    word_dict = {word: i for i, word in enumerate(words)}
     with open("../data/output/embedding_words.txt", mode="w") as f:
         for word in words:
             f.write(word + "\n")
 
     # TODO maybe save cooc as intermediate result to speed up future training
     print("Constructing cooc matrix")
-    cooc = construct_cooc(tweets, words)
+    start = time.perf_counter()
+    cooc = construct_cooc(tweets, word_dict)
+    print(f"  took {time.perf_counter() - start}s")
 
     print("Training embedding")
     start = time.perf_counter()
