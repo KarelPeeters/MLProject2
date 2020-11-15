@@ -1,8 +1,8 @@
-import bisect
 import os
+import random
 import time
 from collections import Counter
-from typing import Optional
+from typing import Optional, List
 
 import numpy as np
 import scipy
@@ -22,7 +22,7 @@ def read_tweets(path: str, max_count: Optional[int]) -> [str]:
     return result
 
 
-def select_words(tweets, max_word_count: Optional[int], filter_punctuation: bool) -> [str]:
+def select_words(tweets, max_word_count: Optional[int], filter_punctuation: bool) -> List[str]:
     """Select the `max_word_count` most common words in the given tweets"""
     # TODO maybe filter out common words and punctuation
     word_counts = Counter()
@@ -30,7 +30,7 @@ def select_words(tweets, max_word_count: Optional[int], filter_punctuation: bool
         for word in tweet.split(" "):
             word_counts[word] += 1
 
-    if filter:
+    if filter_punctuation:
         filtered_word_counts = dict()
         for word, count in word_counts.items():
             contains_letter = any('a' <= letter <= 'z' for letter in word)
@@ -82,9 +82,8 @@ def train_embedding(
         eta: float, n_max: int = 100, alpha: float = 3 / 4
 ):
     """Train a GloVe embedding using batched SGD. `size` is the size of the resulting embedding."""
-    # TODO random initialization: should the sigma depend on the size?
-    w_x = np.random.normal(size=(cooc.shape[0], size))
-    w_y = np.random.normal(size=(cooc.shape[1], size))
+    w_x = np.random.normal(size=(cooc.shape[0], size)) / size
+    w_y = np.random.normal(size=(cooc.shape[1], size)) / size
 
     for epoch in range(epochs):
         total_cost = 0
@@ -114,21 +113,21 @@ def train_embedding(
 
 
 def main():
-    MAX_WORD_COUNT = 20_000
-    MAX_TWEET_COUNT = 100_000
+    MAX_WORD_COUNT = 10_000
+    MAX_TWEET_COUNT = 500_000
 
     os.makedirs("../data/output", exist_ok=True)
 
     print("Reading tweets")
     tweets_pos = read_tweets("../data/twitter-datasets/train_pos_full.txt", MAX_TWEET_COUNT)
     tweets_neg = read_tweets("../data/twitter-datasets/train_neg_full.txt", MAX_TWEET_COUNT)
-    # TODO maybe it's better to shuffle this for word embeddings
     tweets = tweets_pos + tweets_neg
+    random.shuffle(tweets)
 
     print("Selecting words")
     words = select_words(tweets, MAX_WORD_COUNT, filter_punctuation=True)
     word_dict = {word: i for i, word in enumerate(words)}
-    with open("../data/output/embedding_words.txt", mode="w") as f:
+    with open("../data/output/emb_words.txt", mode="w") as f:
         for word in words:
             f.write(word + "\n")
 
@@ -140,9 +139,9 @@ def main():
 
     print("Training embedding")
     start = time.perf_counter()
-    w = train_embedding(cooc, size=20, epochs=10, batch_size=10, eta=0.001)
-    print(f"Training took {time.perf_counter() - start}s")
-    np.save("../data/output/embedding_w.npy", w)
+    w = train_embedding(cooc, size=100, epochs=10, batch_size=3, eta=0.001)
+    print(f"  took {time.perf_counter() - start}s")
+    np.save("../data/output/emb_w.npy", w)
 
 
 if __name__ == '__main__':

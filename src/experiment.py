@@ -1,9 +1,10 @@
 import numpy as np
 
-with open("../data/output/embedding_words.txt") as f:
+with open("../data/output/saved/emb_words.txt") as f:
     words = np.array([line.strip() for line in f])
 
-embed_w = np.load("../data/output/embedding_w.npy")
+embed_w = np.load("../data/output/saved/emb_w.npy")
+embed_w /= np.linalg.norm(embed_w, axis=1)[:, np.newaxis]
 
 
 def embed(word: str):
@@ -15,12 +16,11 @@ def embed(word: str):
 
 
 def find(w, n: int) -> str:
-    dist = np.linalg.norm(embed_w - w, axis=1)
-    min_index = np.argsort(dist)[:n]
-    return words[min_index]
+    dist = np.dot(embed_w, w)
+    max_index = np.argsort(-dist)[:n]
+    return words[max_index]
 
-
-print("[[ Similar too cool ]]")
+print("[[ Similar to cool ]]")
 for word in find(embed("cool"), 8):
     print(word)
 
