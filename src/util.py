@@ -19,11 +19,22 @@ def load_tweets():
     return Tweets(pos=pos, neg=neg)
 
 
+def tweet_as_tokens(tweet: str, word_dict: dict):
+    """Convert a tweet into a list of word indices"""
+    tokens = []
+    for word in tweet.split(" "):
+        index = word_dict.get(word, None)
+        if index is not None:
+            tokens.append(index)
+    return tokens
+
+
 @dataclass
 class Embedding:
     words: [str]
     word_dict: Dict[str, int]
     ws: np.ndarray
+    size: int
 
     def embed(self, word: str):
         index = self.word_dict[word]
@@ -43,4 +54,4 @@ def load_embedding(name: str):
     ws = np.load(f"../data/output/emb_w_{name}.npy")
     ws /= np.linalg.norm(ws, axis=1)[:, np.newaxis]
 
-    return Embedding(words=words, word_dict=word_dict, ws=ws)
+    return Embedding(words=words, word_dict=word_dict, ws=ws, size=ws.shape[1])

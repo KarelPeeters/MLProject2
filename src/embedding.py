@@ -8,7 +8,7 @@ import numpy as np
 import scipy
 import scipy.sparse
 
-from src.util import load_tweets
+from src.util import load_tweets, tweet_as_tokens
 
 
 def select_words(tweets, max_word_count: Optional[int], filter_punctuation: bool) -> List[str]:
@@ -34,16 +34,6 @@ def select_words(tweets, max_word_count: Optional[int], filter_punctuation: bool
     print(f"Kept {len(words)}/{len(word_counts)} words that occur >= {min_occurrences} times")
     words.sort()
     return words
-
-
-def tweet_as_tokens(tweet: str, word_dict: dict):
-    """Convert a tweet into a list of word indices"""
-    tokens = []
-    for word in tweet.split(" "):
-        index = word_dict.get(word, None)
-        if index is not None:
-            tokens.append(index)
-    return tokens
 
 
 def construct_cooc(tweets: [str], word_dict: dict) -> scipy.sparse.coo_matrix:
