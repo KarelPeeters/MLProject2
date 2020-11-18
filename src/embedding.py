@@ -8,18 +8,7 @@ import numpy as np
 import scipy
 import scipy.sparse
 
-
-def read_tweets(path: str, max_count: Optional[int]) -> [str]:
-    """Load up to `max_count` tweets from the given file"""
-    result = []
-
-    with open(path, encoding="latin-1") as f:
-        for line in f:
-            if max_count is not None and len(result) >= max_count:
-                break
-            result.append(line.strip())
-
-    return result
+from src.util import load_tweets
 
 
 def select_words(tweets, max_word_count: Optional[int], filter_punctuation: bool) -> List[str]:
@@ -119,9 +108,8 @@ def main():
     os.makedirs("../data/output", exist_ok=True)
 
     print("Reading tweets")
-    tweets_pos = read_tweets("../data/twitter-datasets/train_pos_full.txt", MAX_TWEET_COUNT)
-    tweets_neg = read_tweets("../data/twitter-datasets/train_neg_full.txt", MAX_TWEET_COUNT)
-    tweets = tweets_pos + tweets_neg
+    tweets = load_tweets()
+    tweets = tweets.pos + tweets.neg
     random.shuffle(tweets)
 
     print("Selecting words")
