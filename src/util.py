@@ -55,3 +55,15 @@ def load_embedding(name: str):
     ws /= np.linalg.norm(ws, axis=1)[:, np.newaxis]
 
     return Embedding(words=words, word_dict=word_dict, ws=ws, size=ws.shape[1])
+    
+    
+def split_data(x, y, ratio):
+    """
+    Split the dataset based according to ratio. 
+    """
+    perm = np.random.permutation(np.arange(len(x)))
+    x, y = x[perm], y[perm]
+
+    split = int(len(x) * ratio)
+    return x[:split], y[:split], x[split:], y[split:]
+
