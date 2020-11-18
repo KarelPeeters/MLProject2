@@ -39,7 +39,15 @@ def accuracy(model, x, y) -> float:
     return torch.eq(y_pred, y).float().mean()
 
 def main():
-    x, y = construct_tensors(tweet_count=100_000)
+    emb = load_embedding("size_200")
+    tweets = load_tweets()
+    print("Constructing tensors")
+    x, y = construct_tensors(emb=emb, tweets=tweets, tweet_count=10_000)
+
+    # shuffle data
+    permutation = torch.randperm(len(x))
+    x = x[permutation]
+    y = y[permutation]
 
 
 if __name__ == '__main__':
