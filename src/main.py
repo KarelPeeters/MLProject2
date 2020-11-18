@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 from matplotlib import pyplot
 
-from src.util import tweet_as_tokens, Embedding, Tweets, load_embedding, load_tweets
+from util import tweet_as_tokens, Embedding, Tweets, load_embedding, load_tweets
 
 
 def construct_tensors(emb: Embedding, tweets: Tweets, tweet_count: int):

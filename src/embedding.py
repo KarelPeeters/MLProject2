@@ -8,7 +8,7 @@ import numpy as np
 import scipy
 import scipy.sparse
 
-from src.util import load_tweets, tweet_as_tokens
+from util import load_tweets, tweet_as_tokens
 
 
 def select_words(tweets, max_word_count: Optional[int], filter_punctuation: bool) -> List[str]:

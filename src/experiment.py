@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.util import load_embedding
+from util import load_embedding
 
 emb = load_embedding("size_200")
 
