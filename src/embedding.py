@@ -29,7 +29,7 @@ def train_embedding(
         avg_cost = 0
 
         for b in range(batch_count):
-            i_batch = shuffle[b:b + batch_size]
+            i_batch = shuffle[b*batch_size:b*batch_size + batch_size]
 
             ix_batch = ix[i_batch]
             iy_batch = iy[i_batch]
