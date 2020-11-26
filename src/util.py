@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, List
 
 import numpy as np
 
@@ -19,7 +19,7 @@ def load_tweets():
     return Tweets(pos=pos, neg=neg)
 
 
-def tweet_as_tokens(tweet: str, word_dict: dict):
+def tweet_as_tokens(tweet: str, word_dict: dict) -> List[int]:
     """Convert a tweet into a list of word indices"""
     tokens = []
     for word in tweet.split(" "):
