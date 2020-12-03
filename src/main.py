@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 from matplotlib import pyplot
-import sys
 
 from util import tweet_as_tokens, Embedding, Tweets, load_embedding, load_tweets, split_data
 
@@ -45,43 +44,43 @@ def train(model, x_train, y_train, x_test, y_test, loss_func, optimizer, epochs:
 
     return losses, train_accs, test_accs
 
+
 class convolutional_nn(torch.nn.Module):
 
-    def __init__(self, n_features, n_filters = 10):
+    def __init__(self, n_features, n_filters=10):
         super().__init__()
-        
+
         self.n_filters = n_filters
         self.conv2 = torch.nn.Conv1d(n_features, n_filters, kernel_size=2)
         self.conv3 = torch.nn.Conv1d(n_features, n_filters, kernel_size=3)
         self.conv4 = torch.nn.Conv1d(n_features, n_filters, kernel_size=4)
         self.conv5 = torch.nn.Conv1d(n_features, n_filters, kernel_size=5)
-        
+
         temp_size = n_filters
-        self.linear1 = torch.nn.Linear(4*n_filters, temp_size)
+        self.linear1 = torch.nn.Linear(4 * n_filters, temp_size)
         self.linear2 = torch.nn.Linear(temp_size, 2)
-        
+
     def forward(self, x):
-    
         relu = torch.nn.functional.relu
-        
-        #apply filters and take maximum element
+
+        # apply filters and take maximum element
         x2 = torch.max(self.conv2(x), dim=2)
         x3 = torch.max(self.conv3(x), dim=2)
         x4 = torch.max(self.conv4(x), dim=2)
         x5 = torch.max(self.conv5(x), dim=2)
-        
-        
-        #concatenate
-        x = torch.cat((x2.values, x3.values, x4.values, x5.values), dim=1) 
-        
-        #regularize
-        #x = torch.nn.functional.dropout(x, training=self.training)
-        
-        #do linear trafo + relu
+
+        # concatenate
+        x = torch.cat((x2.values, x3.values, x4.values, x5.values), dim=1)
+
+        # regularize
+        # x = torch.nn.functional.dropout(x, training=self.training)
+
+        # do linear trafo + relu
         x = relu(self.linear1(x))
         x = self.linear2(x)
-        
+
         return x
+
 
 class LogisticRegressionModel(torch.nn.Module):
     def __init__(self, n_features):
@@ -95,14 +94,12 @@ class LogisticRegressionModel(torch.nn.Module):
 
 
 def logistic_regression(x_train, y_train, x_test, y_test, n_features, epochs, learning_rate, batch_size, device):
-
-    loss_func = torch.nn.CrossEntropyLoss() 
+    loss_func = torch.nn.CrossEntropyLoss()
     model_logreg = LogisticRegressionModel(n_features=n_features)
     optimizer = torch.optim.Adam(model_logreg.parameters(), lr=learning_rate)
 
     print("Training...")
     train(model_logreg, x_train, y_train, x_test, y_test, loss_func, optimizer, epochs, batch_size, device)
-
 
 
 # TODO make including the variance optional
@@ -165,7 +162,6 @@ def accuracy(y_pred, y) -> float:
     return torch.eq(y_pred, y).float().mean()
 
 
-
 def plot_tweet_lengths(tweets: Tweets, max_length: int):
     pos_lengths = list(tweet.count(" ") for tweet in tweets.pos)
     neg_lengths = list(tweet.count(" ") for tweet in tweets.neg)
@@ -196,20 +192,22 @@ def main():
 
     print("Constructing tensors")
     x, y = construct_sequential_tensors(emb=emb, tweets=tweets, tweet_count=10000, max_length=n_channels)
-    #x, y = construct_mean_tensors(emb=emb, tweets=tweets, tweet_count=1000)
 
+    x = x.permute(0, 2, 1)
     x = x.to(device)
     y = y.to(device)
 
     x_train, y_train, x_test, y_test = split_data(x, y, train_ratio)
-    
-    x = x.permute(0,2,1)
-    loss_func = torch.nn.CrossEntropyLoss() 
+
+    loss_func = torch.nn.CrossEntropyLoss()
+
     model = convolutional_nn(n_features=n_features, n_filters=10)
+    model.to(device)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     print("Training...")
-    losses, train_accs, test_accs = train(model, x_train, y_train, x_test, y_test, 
-                                            loss_func, optimizer, epochs, batch_size, device)
+    losses, train_accs, test_accs = train(model, x_train, y_train, x_test, y_test,
+                                          loss_func, optimizer, epochs, batch_size, device)
 
     pyplot.plot(losses, label="loss")
     pyplot.plot(train_accs, label="train acc")
