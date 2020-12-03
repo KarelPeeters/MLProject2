@@ -6,14 +6,14 @@ from util import tweet_as_tokens, Embedding, Tweets, load_embedding, load_tweets
 
 
 def train(
-        model,
+        model, ws,
         x_train, y_train, lens_train,
         x_test, y_test, lens_test,
         loss_func, optimizer, epochs: int, batch_size: int, device: str
 ):
-    losses = np.zeros(epochs // 10)
-    train_accs = np.zeros(epochs // 10)
-    test_accs = np.zeros(epochs // 10)
+    losses = np.zeros(epochs)
+    train_accs = np.zeros(epochs)
+    test_accs = np.zeros(epochs)
 
     for epoch in range(epochs):
         model.train()
@@ -30,7 +30,8 @@ def train(
             y_train_batch = y_train[batch_i]
             lens_train_batch = lens_train[batch_i]
 
-            predictions = model.forward(x_train_batch, lens_train_batch)
+            # print(f"Training batch b={b}")
+            predictions = model.forward(x_train_batch, lens_train_batch, ws)
             loss = loss_func(predictions, y_train_batch)
 
             epoch_loss += loss.item() / batch_count
@@ -40,13 +41,13 @@ def train(
             loss.backward()
             optimizer.step()
 
-        y_test_pred = model.forward(x_test, lens_test)
+        y_test_pred = model.forward(x_test, lens_test, ws)
         test_acc = accuracy(y_test_pred, y_test)
         print(f'Epoch {epoch}/{epochs}, loss {epoch_loss:.4f} acc {epoch_acc:.4f} test_acc {test_acc:.4f}')
 
-        losses[epoch // 10] = epoch_loss
-        train_accs[epoch // 10] = epoch_acc
-        test_accs[epoch // 10] = test_acc
+        losses[epoch] = epoch_loss
+        train_accs[epoch] = epoch_acc
+        test_accs[epoch] = test_acc
 
     return losses, train_accs, test_accs
 
@@ -82,7 +83,7 @@ def construct_sequential_tensors(emb: Embedding, tweets: Tweets, tweet_count: in
     assert tweet_count <= len(tweets.pos) and tweet_count <= len(tweets.neg), "Too many tweets"
 
     # todo maybe store index in x instead of expanded embedding
-    x = torch.zeros(2 * tweet_count, max_length, emb.size)
+    x = torch.zeros(2 * tweet_count, max_length, dtype=torch.long)
     y = torch.empty(2 * tweet_count, dtype=torch.long)
     lens = torch.empty(2 * tweet_count, dtype=torch.long)
 
@@ -97,14 +98,11 @@ def construct_sequential_tensors(emb: Embedding, tweets: Tweets, tweet_count: in
             if len(tokens) > max_length:
                 cropped_count += 1
 
-            for token_i, token in enumerate(tokens):
-                if token_i >= max_length:
-                    break
-
-                x[tweet_i, token_i, :] = torch.tensor(emb.ws[token, :])
+            cropped_len = min(max_length, len(tokens))
+            x[tweet_i, :cropped_len] = torch.tensor(tokens[:cropped_len])
 
             y[tweet_i] = pos
-            lens[tweet_i] = len(tokens)
+            lens[tweet_i] = cropped_len
             tweet_i = tweet_i + 1
 
     print(f"Cropped {cropped_count} ({cropped_count / (2 * tweet_count):.4f}) tweets")
@@ -136,32 +134,30 @@ class RecurrentModel(torch.nn.Module):
     def __init__(self, emb_size: int):
         super().__init__()
 
+        HIDDEN_SIZE = 400
+
         self.lstm = torch.nn.LSTM(
             input_size=emb_size,
-            hidden_size=100, num_layers=1
+            hidden_size=HIDDEN_SIZE, num_layers=3,
         )
+
         self.seq = torch.nn.Sequential(
             torch.nn.Dropout(),
-            torch.nn.Linear(100, 50),
+            torch.nn.Linear(HIDDEN_SIZE, 50),
             torch.nn.ReLU(),
             torch.nn.Dropout(),
             torch.nn.Linear(50, 2),
         )
 
-    def forward(self, x, lens):
-        # print("inputs", x.shape, lens.shape)
+    def forward(self, x, lens, ws):
+        x = ws[x, :]
+
         x = torch.nn.utils.rnn.pack_padded_sequence(x, lens, batch_first=True, enforce_sorted=False)
-        lstm_first, lstm_sec = self.lstm.forward(x)
-        x, pad_sec = torch.nn.utils.rnn.pad_packed_sequence(lstm_first, batch_first=True)
-        # print(x.shape)
-        # print("test indexing", .shape)
-        # print("result", x)
+        x, _ = self.lstm.forward(x)
+        x, _ = torch.nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
+
         x = x[torch.arange(len(x)), lens - 1]
         x = self.seq.forward(x)
-
-        # print(x.shape)
-
-        # raise Exception("end of execution :)")
 
         return x
 
@@ -171,7 +167,7 @@ def main():
     emb = load_embedding("size_200")
     tweets = load_tweets()
 
-    epochs = 2000
+    epochs = 10
     learning_rate = 1e-2
     train_ratio = .99
 
@@ -179,7 +175,7 @@ def main():
     print(f"Using device {device}")
 
     print("Constructing tensors")
-    x, y, lens = construct_sequential_tensors(emb=emb, tweets=tweets, tweet_count=50_000, max_length=40)
+    x, y, lens = construct_sequential_tensors(emb=emb, tweets=tweets, tweet_count=400_000, max_length=38)
     # print(x.shape)
 
     # split first, then copy to avoid allocating a bunch of memory on the gpu
@@ -197,9 +193,11 @@ def main():
     cost_func = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
+    ws = torch.tensor(emb.ws, device=device)
+
     print("Training")
     losses, train_accs, test_accs = train(
-        model,
+        model, ws,
         x_train, y_train, lens_train, x_test, y_test, lens_test,
         cost_func, optimizer, epochs, batch_size=1000,
         device=device
