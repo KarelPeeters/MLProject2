@@ -6,7 +6,7 @@ import sys
 from util import tweet_as_tokens, Embedding, Tweets, load_embedding, load_tweets, split_data
 
 
-def train(model, x_train, y_train, x_test, y_test, loss_func, optimizer, epochs: int, batch_size: int, device: str):
+def train(model, x_train, y_train, lens_train, x_test, y_test, lens_test, loss_func, optimizer, epochs: int, batch_size: int, device: str):
     losses = np.zeros(epochs // 10)
     train_accs = np.zeros(epochs // 10)
     test_accs = np.zeros(epochs // 10)
@@ -24,8 +24,9 @@ def train(model, x_train, y_train, x_test, y_test, loss_func, optimizer, epochs:
             batch_i = shuffle[b * batch_size: (b + 1) * batch_size]
             x_train_batch = x_train[batch_i]
             y_train_batch = y_train[batch_i]
+            lens_batch = lens_train[batch_i]
 
-            predictions = model.forward(x_train_batch)
+            predictions = model.forward(x_train_batch, lens_batch)
             
             loss = loss_func(predictions, y_train_batch)
 
@@ -36,7 +37,7 @@ def train(model, x_train, y_train, x_test, y_test, loss_func, optimizer, epochs:
             loss.backward()
             optimizer.step()
 
-        y_test_pred = model.forward(x_test)
+        y_test_pred = model.forward(x_test, lens_test)
         test_acc = accuracy(y_test_pred, y_test)
         print(f'Epoch {epoch}/{epochs}, loss {epoch_loss:.4f} acc {epoch_acc:.4f} test_acc {test_acc:.4f}')
 
@@ -52,7 +53,7 @@ class convolutional_nn(torch.nn.Module):
         super().__init__()
         
         if n_filters is None:
-            self.n_filters = np.ones(n_convols, dtype='int') * n_filters_const
+            self.n_filters = np.ones(n_convols, dtype=int) * n_filters_const
         else:
             self.n_filters = n_filters
             
@@ -75,25 +76,34 @@ class convolutional_nn(torch.nn.Module):
         self.linear1 = torch.nn.Linear(4*n_filters_const, temp_size)
         self.linear2 = torch.nn.Linear(temp_size, 2)
         """
-    def forward(self, x):
+    def forward(self, x, lens):
     
         relu = torch.nn.functional.relu
         #apply filters and take maximum element
         max_vals = []
-        print("x=", x.shape)
+        # print("x=", x.shape)
         for i in range(self.n_convols):
+            conv_size = i + 2
             conv = self.convs[i](x)
-            print("conv=", conv.shape)
-            neg_inf_tensor = torch.zeros(conv.shape)
-            neg_inf_tensor[:] = float('-inf')
-            max_vals.append(torch.max(torch.where(torch.isnan(conv), neg_inf_tensor, conv), dim=2).values)
+
+            arange = torch.arange(x.shape[2] - conv_size + 1, device=x.device)[None, :]
+            mask = arange[None, :] < (lens[:, None] - conv_size + 1)
+            mask = mask.permute(1, 0, 2)
+
+            neg_inf_tensor = torch.full_like(conv, float("-inf"), device=x.device)
+            replaced = torch.where(mask, neg_inf_tensor, conv)
+
+            max_taken = torch.max(replaced, dim=2).values
+            max_vals.append(max_taken)
             #max_vals.append(torch.max(conv, dim=2).values)
             #print(torch.any(torch.eq(torch.max(torch.where(torch.isnan(conv), neg_inf_tensor, conv), dim=2), float('-inf'))))
             #print(torch.any(torch.isnan(torch.where(torch.isnan(conv), neg_inf_tensor, conv))))
         
         
         #concatenate
-        x = torch.cat(max_vals, dim=1) 
+        x2 = torch.cat(max_vals, dim=1)
+        x2 = torch.where(x2.eq(float("-inf")), torch.zeros_like(x2), x2)
+        x = x2
 
         #regularize
         #x = torch.nn.functional.dropout(x, training=self.training)
@@ -165,10 +175,9 @@ def construct_sequential_tensors(emb: Embedding, tweets: Tweets, tweet_count: in
     # todo maybe store index in x instead of expanded embedding
     x = torch.zeros(2 * tweet_count, max_length, emb.size)
     y = torch.empty(2 * tweet_count, dtype=torch.long)
-    #convert zeros to nan
-    x[:] = float('NaN')
-    cropped_count = 0
+    lens = torch.empty(2 * tweet_count, dtype=torch.long)
 
+    cropped_count = 0
     tweet_i = 0
 
     for pos, curr_tweets in [(1, tweets.pos), (0, tweets.neg)]:
@@ -176,7 +185,7 @@ def construct_sequential_tensors(emb: Embedding, tweets: Tweets, tweet_count: in
             tokens = tweet_as_tokens(tweet, emb.word_dict)
             if len(tokens) > max_length:
                 cropped_count += 1
-            if len(tokens) < 4:
+            if len(tokens) < 10:
                 continue
             for token_i, token in enumerate(tokens):
                 if token_i >= max_length:
@@ -185,9 +194,10 @@ def construct_sequential_tensors(emb: Embedding, tweets: Tweets, tweet_count: in
                 x[tweet_i, token_i, :] = torch.tensor(emb.ws[token, :])
 
             y[tweet_i] = pos
+            lens[tweet_i] = min(max_length, len(tokens))
             tweet_i = tweet_i + 1
 
-    return x, y
+    return x[:tweet_i], y[:tweet_i], lens[:tweet_i]
 
 
 def accuracy(y_pred, y) -> float:
@@ -212,6 +222,9 @@ def plot_tweet_lengths(tweets: Tweets, max_length: int):
 
 
 def main():
+    np.random.seed(123456)
+    torch.manual_seed(123456)
+
     emb = load_embedding("size_200")
     tweets = load_tweets()
 
@@ -225,14 +238,15 @@ def main():
     print(f"Using device {device}")
 
     print("Constructing tensors")
-    x, y = construct_sequential_tensors(emb=emb, tweets=tweets, tweet_count=100, max_length=n_channels)
+    x, y, lens = construct_sequential_tensors(emb=emb, tweets=tweets, tweet_count=50_000, max_length=n_channels)
     #x, y = construct_mean_tensors(emb=emb, tweets=tweets, tweet_count=1000)
-    
+
     x = x.permute(0,2,1)
     x = x.to(device)
     y = y.to(device)
+    lens = lens.to(device)
 
-    x_train, y_train, x_test, y_test = split_data(x, y, train_ratio)
+    x_train, y_train, lens_train, x_test, y_test, lens_test = split_data(x, y, lens, train_ratio)
     
     
     loss_func = torch.nn.CrossEntropyLoss() 
@@ -240,7 +254,7 @@ def main():
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     print("Training...")
-    losses, train_accs, test_accs = train(model, x_train, y_train, x_test, y_test, 
+    losses, train_accs, test_accs = train(model, x_train, y_train, lens_train, x_test, y_test, lens_test,
                                             loss_func, optimizer, epochs, batch_size, device)
 
     pyplot.plot(losses, label="loss")
