@@ -78,39 +78,37 @@ class convolutional_nn(torch.nn.Module):
         """
     def forward(self, x, lens, ws):
         x = ws[x, :].permute(0, 2, 1)
-
         relu = torch.nn.functional.relu
         #apply filters and take maximum element
         max_vals = []
-        # print("x=", x.shape)
+        
         for i in range(self.n_convols):
             conv_size = i + 2
             conv = self.convs[i](x)
+            
+            #create a mask that picks out only sensible values of the convolution, i.e. for a tweet of length l and a 
+            #convolution with kernel size k, we need to pick the first l - k + 1 values of the convolution 
+            #arange = torch.arange(x.shape[2] - conv_size + 1, device=x.device)[None, :]
+            #mask = arange[None, :] < (lens[:, None] - conv_size + 1)
+            #mask = mask.permute(1, 0, 2)
+            
+            #replace values that are not sensible with -inf, to exclude them from the maximum 
+            #neg_inf_tensor = torch.full_like(conv, float("-inf"), device=x.device)
+            #replaced = torch.where(mask, neg_inf_tensor, conv)
 
-            arange = torch.arange(x.shape[2] - conv_size + 1, device=x.device)[None, :]
-            mask = arange[None, :] < (lens[:, None] - conv_size + 1)
-            mask = mask.permute(1, 0, 2)
-
-            neg_inf_tensor = torch.full_like(conv, float("-inf"), device=x.device)
-            replaced = torch.where(mask, neg_inf_tensor, conv)
-
-            max_taken = torch.max(replaced, dim=2).values
+            #max_taken = torch.max(replaced, dim=2).values
+            max_taken = torch.max(conv, dim=2).values
             max_vals.append(max_taken)
-            #max_vals.append(torch.max(conv, dim=2).values)
-            #print(torch.any(torch.eq(torch.max(torch.where(torch.isnan(conv), neg_inf_tensor, conv), dim=2), float('-inf'))))
-            #print(torch.any(torch.isnan(torch.where(torch.isnan(conv), neg_inf_tensor, conv))))
-        
         
         #concatenate
         x2 = torch.cat(max_vals, dim=1)
-        x2 = torch.where(x2.eq(float("-inf")), torch.zeros_like(x2), x2)
+        #x2 = torch.where(x2.eq(float("-inf")), torch.zeros_like(x2), x2)
         x = x2
 
-        x = torch.max(torch.zeros_like(x), x)
+        #x = torch.max(torch.zeros_like(x), x)
 
         #regularize
         x = torch.nn.functional.dropout(x, training=self.training)
-        
         """     
         x2 = torch.max(self.convs[0](x), dim=2)
         x3 = torch.max(self.convs[1](x), dim=2)
@@ -194,7 +192,8 @@ def construct_sequential_tensors(emb: Embedding, tweets: Tweets, tweet_count: in
                 cropped_count += 1
 
             cropped_len = min(crop_length, len(tokens))
-            x[tweet_i, :cropped_len] = torch.tensor(tokens[:cropped_len])
+            #ATTENTION: +1 for index correction when adding a row of zeros in ws
+            x[tweet_i, :cropped_len] = torch.tensor(tokens[:cropped_len]) + 1
 
             y[tweet_i] = pos
             lens[tweet_i] = cropped_len
@@ -236,11 +235,11 @@ def main():
     emb = load_embedding("size_200")
     tweets = load_tweets()
 
-    tweet_count = 50_000
+    tweet_count = 10
     epochs = 20
     learning_rate = 1e-2
-    train_ratio = 1 - 1000 / tweet_count
-    batch_size = 100
+    train_ratio = .95
+    batch_size = 5
     n_features = emb.size
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device {device}")
@@ -253,7 +252,9 @@ def main():
     y = y.to(device)
     lens = lens.to(device)
     ws = torch.tensor(emb.ws, device=device)
-
+    zeros_row = torch.zeros(ws.shape[1])
+    ws = torch.cat((zeros_row[None, :], ws), dim=0)
+    
     x_train, y_train, lens_train, x_test, y_test, lens_test = split_data(x, y, lens, train_ratio)
 
     loss_func = torch.nn.CrossEntropyLoss()
