@@ -4,13 +4,15 @@ from matplotlib import pyplot
 
 from util import tweet_as_tokens, Embedding, Tweets, load_embedding, load_tweets, split_data, accuracy
 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using device {DEVICE}")
+
 
 def train(
         model, ws,
         x_train, y_train, lens_train,
         x_test, y_test, lens_test,
         loss_func, optimizer, epochs: int, batch_size: int,
-        device: str
 ):
     losses = np.zeros(epochs)
     train_accs = np.zeros(epochs)
@@ -19,7 +21,7 @@ def train(
     for epoch in range(epochs):
         model.train()
 
-        shuffle = torch.randperm(len(x_train), device=device)
+        shuffle = torch.randperm(len(x_train), device=DEVICE)
         batch_count = len(x_train) // batch_size
 
         epoch_loss = 0
@@ -199,8 +201,6 @@ def main_cnn(emb: Embedding, tweets: Tweets):
     train_ratio = 1 - 1000 / tweet_count
     batch_size = 100
     n_features = emb.size
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device {device}")
 
     print("Constructing tensors")
     x, y, lens = construct_sequential_tensors(
@@ -208,26 +208,86 @@ def main_cnn(emb: Embedding, tweets: Tweets):
         tweet_count=tweet_count, min_length=1, crop_length=40
     )
 
-    x = x.to(device)
-    y = y.to(device)
-    lens = lens.to(device)
-    ws = torch.tensor(emb.ws, device=device)
+    x = x.to(DEVICE)
+    y = y.to(DEVICE)
+    lens = lens.to(DEVICE)
+    ws = torch.tensor(emb.ws, device=DEVICE)
 
     x_train, y_train, lens_train, x_test, y_test, lens_test = split_data(x, y, lens, train_ratio)
 
     loss_func = torch.nn.CrossEntropyLoss()
     model = convolutional_nn(n_features=n_features, n_convols=4, n_filters_const=10)
-    model.to(device)
+    model.to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
     print("Training...")
-    losses, train_accs, test_accs = train(
+    return train(
         model, ws,
         x_train, y_train, lens_train,
         x_test, y_test, lens_test,
-        loss_func, optimizer, epochs, batch_size, device
+        loss_func, optimizer, epochs, batch_size
     )
 
-    return losses, train_accs, test_accs
+
+class RecurrentModel(torch.nn.Module):
+    def __init__(self, emb_size: int):
+        super().__init__()
+
+        HIDDEN_SIZE = 400
+
+        self.lstm = torch.nn.LSTM(
+            input_size=emb_size,
+            hidden_size=HIDDEN_SIZE, num_layers=3,
+        )
+
+        self.seq = torch.nn.Sequential(
+            torch.nn.Dropout(),
+            torch.nn.Linear(HIDDEN_SIZE, 50),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(),
+            torch.nn.Linear(50, 2),
+        )
+
+    def forward(self, x, lens, ws):
+        x = ws[x, :]
+
+        x = torch.nn.utils.rnn.pack_padded_sequence(x, lens, batch_first=True, enforce_sorted=False)
+        x, _ = self.lstm.forward(x)
+        x, _ = torch.nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
+
+        x = x[torch.arange(len(x)), lens - 1]
+        x = self.seq.forward(x)
+
+        return x
+
+
+def main_rnn(emb: Embedding, tweets: Tweets):
+    learning_rate = 1e-3
+    tweet_count = 100_000
+    train_ratio = 0.99
+    epochs = 20
+
+    model = RecurrentModel(emb_size=emb.size)
+    model.to(DEVICE)
+
+    cost_func = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    ws = torch.tensor(emb.ws, device=DEVICE)
+
+    x, y, lens = construct_sequential_tensors(emb, tweets, tweet_count, min_length=1, crop_length=40)
+    x = x.to(DEVICE)
+    y = y.to(DEVICE)
+    lens = lens.to(DEVICE)
+
+    x_train, y_train, lens_train, x_test, y_test, lens_test = split_data(x, y, lens, train_ratio)
+
+    print("Training")
+    return train(
+        model, ws,
+        x_train, y_train, lens_train, x_test, y_test, lens_test,
+        cost_func, optimizer, epochs, batch_size=1000,
+    )
 
 
 def main():
@@ -238,6 +298,7 @@ def main():
     tweets = load_tweets()
 
     losses, train_accs, test_accs = main_cnn(emb, tweets)
+    losses, train_accs, test_accs = main_rnn(emb, tweets)
 
     pyplot.plot(losses, label="loss")
     pyplot.plot(train_accs, label="train acc")
