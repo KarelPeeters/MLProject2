@@ -75,3 +75,8 @@ def set_seeds(seed: Optional[int] = None):
     np.random.seed(seed)
     torch.manual_seed(seed)
     random.seed(seed)
+
+def add_zero_row(ws, DEVICE):
+    zeros_row = torch.zeros(ws.shape[1], device=DEVICE)
+    ws = torch.cat((zeros_row[None, :], ws), dim=0)
+    return ws
