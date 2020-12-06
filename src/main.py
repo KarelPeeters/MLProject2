@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from matplotlib import pyplot
 
-from util import tweet_as_tokens, Embedding, Tweets, load_embedding, load_tweets, split_data
+from util import tweet_as_tokens, Embedding, Tweets, load_embedding, load_tweets, split_data, accuracy
 
 
 def train(model, x_train, y_train, x_test, y_test, loss_func, optimizer, epochs: int, batch_size: int, device: str):
@@ -155,26 +155,6 @@ def construct_sequential_tensors(emb: Embedding, tweets: Tweets, tweet_count: in
             tweet_i = tweet_i + 1
 
     return x, y
-
-
-def accuracy(y_pred, y) -> float:
-    y_pred = torch.argmax(y_pred, dim=1)
-    return torch.eq(y_pred, y).float().mean()
-
-
-def plot_tweet_lengths(tweets: Tweets, max_length: int):
-    pos_lengths = list(tweet.count(" ") for tweet in tweets.pos)
-    neg_lengths = list(tweet.count(" ") for tweet in tweets.neg)
-
-    pyplot.hist([pos_lengths, neg_lengths], range=(0, max_length), bins=max_length, label=["pos", "neg"], density=True)
-    pyplot.legend()
-    pyplot.xlabel("word count")
-    pyplot.ylabel("frequency")
-    pyplot.show()
-
-    dropped_count = sum(1 for length in pos_lengths + neg_lengths if length > max_length)
-    total_count = len(pos_lengths) + len(neg_lengths)
-    print(f"max_length={max_length} drops {dropped_count} ({dropped_count / total_count:.4f}) tweets")
 
 
 def main():

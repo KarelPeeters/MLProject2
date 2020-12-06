@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 import numpy as np
+import torch
 
 
 @dataclass
@@ -67,3 +68,7 @@ def split_data(x, y, ratio):
     split = int(len(x) * ratio)
     return x[:split], y[:split], x[split:], y[split:]
 
+
+def accuracy(y_pred, y) -> float:
+    y_pred = torch.argmax(y_pred, dim=1)
+    return torch.eq(y_pred, y).float().mean()
