@@ -21,6 +21,7 @@ def train(
         return [x for x in args if x is not None]
     if print_update:
         print("Training")
+
     losses = np.zeros(epochs)
     train_accs = np.zeros(epochs)
     test_accs = np.zeros(epochs)
@@ -342,24 +343,10 @@ def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     activation_func = torch.nn.functional.relu
 
     print("Constructing tensors")
-<<<<<<< HEAD
     ws = torch.tensor(emb.ws, device=DEVICE)
     ws = add_zero_row(ws, DEVICE=DEVICE)
     x_train, y_train, lens_train = construct_sequential_tensors(emb, tweets_train, min_length, crop_length)
     x_test, y_test, lens_test = construct_sequential_tensors(emb, tweets_test, min_length, crop_length)
-=======
-    x, y, lens = construct_sequential_tensors(emb=emb, tweets=tweets, tweet_count=tweet_count, min_length=1, crop_length=40)
-    #x, y = construct_mean_tensors(emb=emb, tweets=tweets, tweet_count=1000)
-
-    x = x.to(device)
-    y = y.to(device)
-    lens = lens.to(device)
-    ws = torch.tensor(emb.ws, device=device)
-    zeros_row = torch.zeros(ws.shape[1], device=device)
-    ws = torch.cat((zeros_row[None, :], ws), dim=0)
-    
-    x_train, y_train, lens_train, x_test, y_test, lens_test = split_data(x, y, lens, train_ratio)
->>>>>>> 7adc498... thx2
 
     loss_func = torch.nn.CrossEntropyLoss()
     
@@ -389,7 +376,7 @@ class SelectedModel(Enum):
 def main():
     train_count = 100
     test_count = 50
-    selected_model = SelectedModel.RNN
+    selected_model = SelectedModel.CNN
 
     set_seeds(None)
 
