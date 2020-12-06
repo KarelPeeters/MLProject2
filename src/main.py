@@ -60,9 +60,9 @@ class convolutional_nn(torch.nn.Module):
         self.n_convols = n_convols
         self.convs = torch.nn.ModuleList()
         for i in range(self.n_convols):
-            self.convs.append(torch.nn.Conv1d(n_features, self.n_filters[i], kernel_size=i+2))
+            self.convs.append(torch.nn.Conv1d(n_features, self.n_filters[i], kernel_size=i+2, padding = (i+2) // 2))
  
-        temp_size = 100
+        temp_size = 10
         self.linear1 = torch.nn.Linear(np.sum(self.n_filters), temp_size)
         self.linear2 = torch.nn.Linear(temp_size, 2)
         """
@@ -85,21 +85,20 @@ class convolutional_nn(torch.nn.Module):
         for i in range(self.n_convols):
             conv_size = i + 2
             conv = self.convs[i](x)
-            
             #create a mask that picks out only sensible values of the convolution, i.e. for a tweet of length l and a 
             #convolution with kernel size k, we need to pick the first l - k + 1 values of the convolution 
-            #arange = torch.arange(x.shape[2] - conv_size + 1, device=x.device)[None, :]
-            #mask = arange[None, :] < (lens[:, None] - conv_size + 1)
-            #mask = mask.permute(1, 0, 2)
+            arange = torch.arange(x.shape[2] + 1 - conv_size%2, device=x.device)[None, :]
+            mask = arange[None, :] < (lens[:, None] + 1 - conv_size%2)
+            mask = mask.permute(1, 0, 2)
             
             #replace values that are not sensible with -inf, to exclude them from the maximum 
-            #neg_inf_tensor = torch.full_like(conv, float("-inf"), device=x.device)
-            #replaced = torch.where(mask, neg_inf_tensor, conv)
+            neg_inf_tensor = torch.full_like(conv, float("-inf"), device=x.device)
+            replaced = torch.where(mask, neg_inf_tensor, conv)
 
-            #max_taken = torch.max(replaced, dim=2).values
-            max_taken = torch.max(conv, dim=2).values
+            max_taken = torch.max(replaced, dim=2).values
+            #max_taken = torch.max(conv, dim=2).values
             max_vals.append(max_taken)
-        
+
         #concatenate
         x2 = torch.cat(max_vals, dim=1)
         #x2 = torch.where(x2.eq(float("-inf")), torch.zeros_like(x2), x2)
@@ -252,7 +251,7 @@ def main():
     y = y.to(device)
     lens = lens.to(device)
     ws = torch.tensor(emb.ws, device=device)
-    zeros_row = torch.zeros(ws.shape[1])
+    zeros_row = torch.zeros(ws.shape[1], device=device)
     ws = torch.cat((zeros_row[None, :], ws), dim=0)
     
     x_train, y_train, lens_train, x_test, y_test, lens_test = split_data(x, y, lens, train_ratio)
