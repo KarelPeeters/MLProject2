@@ -6,10 +6,10 @@ import sys
 from util import tweet_as_tokens, Embedding, Tweets, load_embedding, load_tweets, split_data
 
 
-def train(model, x_train, y_train, lens_train, x_test, y_test, lens_test, loss_func, optimizer, epochs: int, batch_size: int, device: str):
-    losses = np.zeros(epochs // 10)
-    train_accs = np.zeros(epochs // 10)
-    test_accs = np.zeros(epochs // 10)
+def train(model, ws, x_train, y_train, lens_train, x_test, y_test, lens_test, loss_func, optimizer, epochs: int, batch_size: int, device: str):
+    losses = np.zeros(epochs)
+    train_accs = np.zeros(epochs)
+    test_accs = np.zeros(epochs)
 
     for epoch in range(epochs):
         model.train()
@@ -26,8 +26,8 @@ def train(model, x_train, y_train, lens_train, x_test, y_test, lens_test, loss_f
             y_train_batch = y_train[batch_i]
             lens_batch = lens_train[batch_i]
 
-            predictions = model.forward(x_train_batch, lens_batch)
-            
+            predictions = model.forward(x_train_batch, lens_batch, ws)
+
             loss = loss_func(predictions, y_train_batch)
 
             epoch_loss += loss.item() / batch_count
@@ -37,13 +37,13 @@ def train(model, x_train, y_train, lens_train, x_test, y_test, lens_test, loss_f
             loss.backward()
             optimizer.step()
 
-        y_test_pred = model.forward(x_test, lens_test)
+        y_test_pred = model.forward(x_test, lens_test, ws)
         test_acc = accuracy(y_test_pred, y_test)
         print(f'Epoch {epoch}/{epochs}, loss {epoch_loss:.4f} acc {epoch_acc:.4f} test_acc {test_acc:.4f}')
 
-        losses[epoch // 10] = epoch_loss
-        train_accs[epoch // 10] = epoch_acc
-        test_accs[epoch // 10] = test_acc
+        losses[epoch] = epoch_loss
+        train_accs[epoch] = epoch_acc
+        test_accs[epoch] = test_acc
 
     return losses, train_accs, test_accs
 
@@ -62,7 +62,7 @@ class convolutional_nn(torch.nn.Module):
         for i in range(self.n_convols):
             self.convs.append(torch.nn.Conv1d(n_features, self.n_filters[i], kernel_size=i+2))
  
-        temp_size = 10
+        temp_size = 100
         self.linear1 = torch.nn.Linear(np.sum(self.n_filters), temp_size)
         self.linear2 = torch.nn.Linear(temp_size, 2)
         """
@@ -76,8 +76,9 @@ class convolutional_nn(torch.nn.Module):
         self.linear1 = torch.nn.Linear(4*n_filters_const, temp_size)
         self.linear2 = torch.nn.Linear(temp_size, 2)
         """
-    def forward(self, x, lens):
-    
+    def forward(self, x, lens, ws):
+        x = ws[x, :].permute(0, 2, 1)
+
         relu = torch.nn.functional.relu
         #apply filters and take maximum element
         max_vals = []
@@ -105,8 +106,10 @@ class convolutional_nn(torch.nn.Module):
         x2 = torch.where(x2.eq(float("-inf")), torch.zeros_like(x2), x2)
         x = x2
 
+        x = torch.max(torch.zeros_like(x), x)
+
         #regularize
-        #x = torch.nn.functional.dropout(x, training=self.training)
+        x = torch.nn.functional.dropout(x, training=self.training)
         
         """     
         x2 = torch.max(self.convs[0](x), dim=2)
@@ -169,33 +172,38 @@ def construct_mean_tensors(emb: Embedding, tweets: Tweets, tweet_count: int):
     return x, y
 
 
-def construct_sequential_tensors(emb: Embedding, tweets: Tweets, tweet_count: int, max_length: int):
+def construct_sequential_tensors(emb: Embedding, tweets: Tweets, tweet_count: int, min_length: int, crop_length: int):
     assert tweet_count <= len(tweets.pos) and tweet_count <= len(tweets.neg), "Too many tweets"
 
     # todo maybe store index in x instead of expanded embedding
-    x = torch.zeros(2 * tweet_count, max_length, emb.size)
+    x = torch.zeros(2 * tweet_count, crop_length, dtype=torch.long)
     y = torch.empty(2 * tweet_count, dtype=torch.long)
     lens = torch.empty(2 * tweet_count, dtype=torch.long)
 
     cropped_count = 0
+    too_short_count = 0
     tweet_i = 0
 
     for pos, curr_tweets in [(1, tweets.pos), (0, tweets.neg)]:
         for tweet in curr_tweets[:tweet_count]:
             tokens = tweet_as_tokens(tweet, emb.word_dict)
-            if len(tokens) > max_length:
-                cropped_count += 1
-            if len(tokens) < 10:
+            if len(tokens) < min_length:
+                too_short_count += 1
                 continue
-            for token_i, token in enumerate(tokens):
-                if token_i >= max_length:
-                    break
+            if len(tokens) > crop_length:
+                cropped_count += 1
 
-                x[tweet_i, token_i, :] = torch.tensor(emb.ws[token, :])
+            cropped_len = min(crop_length, len(tokens))
+            x[tweet_i, :cropped_len] = torch.tensor(tokens[:cropped_len])
 
             y[tweet_i] = pos
-            lens[tweet_i] = min(max_length, len(tokens))
+            lens[tweet_i] = cropped_len
             tweet_i = tweet_i + 1
+
+    if cropped_count:
+        print(f"Cropped {cropped_count} ({cropped_count / (2 * tweet_count):.4f}) tweets that were too long")
+    if too_short_count:
+        print(f"Skipped {too_short_count} ({too_short_count / (2 * tweet_count):.4f}) tweets that are too short")
 
     return x[:tweet_i], y[:tweet_i], lens[:tweet_i]
 
@@ -228,34 +236,37 @@ def main():
     emb = load_embedding("size_200")
     tweets = load_tweets()
 
-    epochs = 200
+    tweet_count = 50_000
+    epochs = 20
     learning_rate = 1e-2
-    train_ratio = .95
-    batch_size = 5
-    n_channels = 40
+    train_ratio = 1 - 1000 / tweet_count
+    batch_size = 100
     n_features = emb.size
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device {device}")
 
     print("Constructing tensors")
-    x, y, lens = construct_sequential_tensors(emb=emb, tweets=tweets, tweet_count=50_000, max_length=n_channels)
+    x, y, lens = construct_sequential_tensors(emb=emb, tweets=tweets, tweet_count=tweet_count, min_length=1, crop_length=40)
     #x, y = construct_mean_tensors(emb=emb, tweets=tweets, tweet_count=1000)
 
-    x = x.permute(0,2,1)
     x = x.to(device)
     y = y.to(device)
     lens = lens.to(device)
+    ws = torch.tensor(emb.ws, device=device)
 
     x_train, y_train, lens_train, x_test, y_test, lens_test = split_data(x, y, lens, train_ratio)
-    
-    
-    loss_func = torch.nn.CrossEntropyLoss() 
+
+    loss_func = torch.nn.CrossEntropyLoss()
     model = convolutional_nn(n_features=n_features, n_convols=4, n_filters_const=10)
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     print("Training...")
-    losses, train_accs, test_accs = train(model, x_train, y_train, lens_train, x_test, y_test, lens_test,
-                                            loss_func, optimizer, epochs, batch_size, device)
+    losses, train_accs, test_accs = train(
+        model, ws,
+        x_train, y_train, lens_train,
+        x_test, y_test, lens_test,
+        loss_func, optimizer, epochs, batch_size, device
+    )
 
     pyplot.plot(losses, label="loss")
     pyplot.plot(train_accs, label="train acc")
