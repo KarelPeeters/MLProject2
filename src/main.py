@@ -64,6 +64,7 @@ def train(
                 prev_print_time = curr_time
 
         # do batching on test as well to conserve memory
+        model.eval()
         batch_count = len(x_test) // batch_size
         test_acc = 0
 
@@ -85,7 +86,6 @@ def train(
 
         if save_model_path is not None:
             torch.save(model, save_model_path)
-
 
     return losses, train_accs, test_accs
 
