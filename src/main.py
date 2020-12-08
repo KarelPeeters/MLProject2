@@ -1,5 +1,6 @@
 import time
 from enum import Enum, auto
+from typing import Optional
 
 import numpy as np
 import torch
@@ -17,6 +18,7 @@ def train(
         x_train, y_train, lens_train,
         x_test, y_test, lens_test,
         loss_func, optimizer, epochs: int, batch_size: int,
+        save_model_path: Optional[str] = None,
 ):
     print("Training")
 
@@ -33,8 +35,8 @@ def train(
         shuffle = torch.randperm(len(x_train), device=DEVICE)
         batch_count = len(x_train) // batch_size
 
-        epoch_loss = 0
-        epoch_acc = 0
+        train_loss = 0
+        train_acc = 0
 
         prev_print_time = time.monotonic()
 
@@ -49,8 +51,8 @@ def train(
             batch_loss = loss_func(predictions, y_train_batch)
             batch_acc = accuracy(predictions, y_train_batch)
 
-            epoch_loss += batch_loss.item() / batch_count
-            epoch_acc += batch_acc / batch_count
+            train_loss += batch_loss.item() / batch_count
+            train_acc += batch_acc / batch_count
 
             optimizer.zero_grad()
             batch_loss.backward()
@@ -61,13 +63,29 @@ def train(
                 print(f"  batch {b}/{batch_count}: loss {batch_loss.item():.4f} train acc {batch_acc:.4f}")
                 prev_print_time = curr_time
 
-        y_test_pred = model.forward(*drop_none(x_test, lens_test, ws))
-        test_acc = accuracy(y_test_pred, y_test)
-        print(f'Epoch {epoch}/{epochs}, loss {epoch_loss:.4f} acc {epoch_acc:.4f} test_acc {test_acc:.4f}')
+        # do batching on test as well to conserve memory
+        batch_count = len(x_test) // batch_size
+        test_acc = 0
 
-        losses[epoch] = epoch_loss
-        train_accs[epoch] = epoch_acc
+        for b in range(batch_count):
+            x_test_batch = x_test[b * batch_size:(b + 1) * batch_size]
+            y_test_batch = y_test[b * batch_size:(b + 1) * batch_size]
+            lens_batch = lens_test[b * batch_size:(b + 1) * batch_size] if lens_test is not None else None
+
+            predictions = model.forward(*drop_none(x_test_batch, lens_batch, ws))
+
+            batch_acc = accuracy(predictions, y_test_batch)
+            test_acc += batch_acc / batch_count
+
+        print(f'Epoch {epoch}/{epochs}, loss {train_loss:.4f} acc {train_acc:.4f} test_acc {test_acc:.4f}')
+
+        losses[epoch] = train_loss
+        train_accs[epoch] = train_acc
         test_accs[epoch] = test_acc
+
+        if save_model_path is not None:
+            torch.save(model, save_model_path)
+
 
     return losses, train_accs, test_accs
 
@@ -285,7 +303,7 @@ def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
 
 def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     learning_rate = 1e-3
-    epochs = 20
+    epochs = 40
     min_length = 1
     crop_length = 40
 
@@ -305,6 +323,7 @@ def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
         model, ws,
         x_train, y_train, lens_train, x_test, y_test, lens_test,
         cost_func, optimizer, epochs, batch_size=1000,
+        save_model_path="../data/output/rnn_model.pt",
     )
 
 
@@ -317,8 +336,8 @@ class SelectedModel(Enum):
 
 def main():
     train_count = 400_000
-    test_count = 10_000
-    selected_model = SelectedModel.MEAN_NEURAL
+    test_count = 20_000
+    selected_model = SelectedModel.RNN
 
     set_seeds(None)
 
