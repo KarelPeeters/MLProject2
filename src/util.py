@@ -1,6 +1,6 @@
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -26,8 +26,8 @@ class Tweets:
             next_i += count
 
             result.append(Tweets(
-                pos=shuffled_pos[next_i:next_i+count],
-                neg=shuffled_neg[next_i:next_i+count],
+                pos=shuffled_pos[next_i:next_i + count],
+                neg=shuffled_neg[next_i:next_i + count],
             ))
 
         return result
@@ -50,34 +50,6 @@ def tweet_as_tokens(tweet: str, word_dict: dict) -> List[int]:
         if index is not None:
             tokens.append(index)
     return tokens
-
-
-@dataclass
-class Embedding:
-    words: [str]
-    word_dict: Dict[str, int]
-    ws: np.ndarray
-    size: int
-
-    def embed(self, word: str):
-        index = self.word_dict[word]
-        return self.ws[index, :]
-
-    def find(self, w: np.ndarray, n: int):
-        dist = np.dot(self.ws, w)
-        max_index = np.argsort(-dist)[:n]
-        return self.words[max_index]
-
-
-def load_embedding(name: str):
-    with open(f"../data/output/emb_words_{name}.txt") as f:
-        words = np.array([line.strip() for line in f])
-    word_dict = {word: i for i, word in enumerate(words)}
-
-    ws = np.load(f"../data/output/emb_w_{name}.npy")
-    ws /= np.linalg.norm(ws, axis=1)[:, np.newaxis]
-
-    return Embedding(words=words, word_dict=word_dict, ws=ws, size=ws.shape[1])
 
 
 def split_tweets(x, y, lens, ratio):

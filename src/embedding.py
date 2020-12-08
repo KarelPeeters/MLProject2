@@ -1,11 +1,42 @@
-from typing import List, Callable
+import subprocess
+from dataclasses import dataclass
+from typing import List, Callable, Optional, Dict
 
 import numpy as np
 import torch
 from torch.optim import Optimizer
 
 
-def train_embedding(
+def get_file_paths(max_word_count: int, context_dist: Optional[int], emb_size: int):
+    context_dist = context_dist or 0
+
+    word_file = f"../data/output/emb_words_{max_word_count}.txt"
+    cooc_file = f"../data/output/emb_cooc_{max_word_count}_ctx_{context_dist}.npy"
+    w_file = f"../data/output/emb_w_{max_word_count}_ctx_{context_dist}_size_{emb_size}.npy"
+
+    return word_file, cooc_file, w_file
+
+
+def construct_cooc(max_word_count: int, context_dist: Optional[int], input_file: str):
+    """Call glove-rs to quickly construct the cooc matrix"""
+    context_dist = context_dist or 0
+
+    word_file, cooc_file, _ = get_file_paths(max_word_count, context_dist, 0)
+
+    cargo_args = "cargo run --release --manifest-path=../glove-rs/Cargo.toml --".split(" ")
+    glove_rs_args = [
+        input_file,
+        str(max_word_count), str(context_dist),
+        word_file, cooc_file
+    ]
+
+    args = cargo_args + glove_rs_args
+
+    print(" ".join(args))
+    subprocess.run(args, check=True)
+
+
+def train_embedding_from_cooc(
         word_count: int, cooc: np.ndarray, size: int, epochs: int, batch_size: int,
         device: str, optimizer: Callable[[List[torch.Tensor]], Optimizer],
         n_max: int = 100, alpha: float = 3 / 4,
@@ -29,7 +60,7 @@ def train_embedding(
         avg_cost = 0
 
         for b in range(batch_count):
-            i_batch = shuffle[b*batch_size:b*batch_size + batch_size]
+            i_batch = shuffle[b * batch_size:b * batch_size + batch_size]
 
             ix_batch = ix[i_batch]
             iy_batch = iy[i_batch]
@@ -56,14 +87,20 @@ def train_embedding(
 
         print(f"epoch {epoch}, cost {avg_cost}")
 
-    return (wx + wy).detach().cpu().numpy()
+    result = (wx + wy).detach().cpu().numpy()
+    result /= np.linalg.norm(result, axis=1)[:, np.newaxis]
+    return result
 
 
-def main():
+def create_embedding(input_file, max_word_count, context_dist, emb_size):
+    word_file, cooc_file, w_file = get_file_paths(max_word_count, context_dist, emb_size)
+
+    print("Constructing cooc")
+    construct_cooc(max_word_count, context_dist, input_file)
+
     print("Loading cooc")
-    cooc = np.load("../data/output/emb_cooc_full.npy")
+    cooc = np.load(cooc_file)
     word_count = np.max(cooc[:, 0]) + 1
-
     print(f"cooc size: {cooc.shape}")
     print(f"word count: {word_count}")
 
@@ -72,11 +109,53 @@ def main():
     def optimizer(params):
         return torch.optim.Adam(params)
 
-    w = train_embedding(
-        word_count=word_count, cooc=cooc, size=400,
-        epochs=5, batch_size=200, device="cuda", optimizer=optimizer, n_max=200,
+    w = train_embedding_from_cooc(
+        word_count=word_count, cooc=cooc, size=200,
+        epochs=10, batch_size=200, device="cuda", optimizer=optimizer, n_max=200,
     )
-    np.save("../data/output/emb_w_derp.npy", w)
+
+    print("Saving output")
+    np.save(w_file, w)
+
+
+@dataclass
+class Embedding:
+    words: [str]
+    word_dict: Dict[str, int]
+    ws: np.ndarray
+    size: int
+
+    def embed(self, word: str):
+        index = self.word_dict[word]
+        return self.ws[index, :]
+
+    def find(self, w: np.ndarray, n: int):
+        dist = np.dot(self.ws, w)
+        max_index = np.argsort(-dist)[:n]
+        return self.words[max_index]
+
+
+def load_embedding(max_word_count: int, context_dist: Optional[int], emb_size: int):
+    word_file, _, w_file = get_file_paths(max_word_count, context_dist, emb_size)
+
+    with open(word_file) as f:
+        words = np.array([line.strip() for line in f])
+    word_dict = {word: i for i, word in enumerate(words)}
+
+    ws = np.load(w_file)
+
+    return Embedding(words=words, word_dict=word_dict, ws=ws, size=ws.shape[1])
+
+
+def main():
+    # TODO we really need to split the test/train data before this point, right now we're just using all of the data
+    input_file = "../data/output/all_tweets.txt"
+
+    max_word_count: int = 10_000
+    context_dist: Optional[int] = 3
+    emb_size: int = 200
+
+    create_embedding(input_file, max_word_count, context_dist, emb_size)
 
 
 if __name__ == '__main__':

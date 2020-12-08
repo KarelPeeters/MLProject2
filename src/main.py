@@ -5,7 +5,8 @@ import numpy as np
 import torch
 from matplotlib import pyplot
 
-from util import tweet_as_tokens, Embedding, Tweets, load_embedding, load_tweets, accuracy, set_seeds
+from embedding import Embedding, load_embedding
+from util import tweet_as_tokens, Tweets, load_tweets, accuracy, set_seeds
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device {DEVICE}")
@@ -57,7 +58,7 @@ def train(
 
             curr_time = time.monotonic()
             if curr_time - prev_print_time > 10:
-                print(f"  batch {b}/{batch_count}: loss {batch_loss.item():.2f} train acc {batch_acc:.2f}")
+                print(f"  batch {b}/{batch_count}: loss {batch_loss.item():.4f} train acc {batch_acc:.4f}")
                 prev_print_time = curr_time
 
         y_test_pred = model.forward(*drop_none(x_test, lens_test, ws))
@@ -228,7 +229,7 @@ def main_mean_neural(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     learning_rate = 1e-3
     include_var = False
     batch_size = 50
-    epochs = 100
+    epochs = 20
 
     print("Constructing tensors")
     x_train, y_train = construct_mean_tensors(emb, tweets_train, include_var)
@@ -322,7 +323,7 @@ def main():
     set_seeds(None)
 
     print("Loading embedding")
-    emb = load_embedding("size_200")
+    emb = load_embedding(10_000, 0, 200)
 
     print("Loading tweets")
     tweets = load_tweets()

@@ -1,8 +1,8 @@
 import numpy as np
 
-from util import load_embedding
+from embedding import load_embedding
 
-emb = load_embedding("size_200")
+emb = load_embedding(10_000, 3, 200)
 
 print("[[ Similar to cool ]]")
 for word in emb.find(emb.embed("cool"), 20):
