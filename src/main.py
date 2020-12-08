@@ -54,7 +54,7 @@ def train(
             optimizer.zero_grad()
             batch_loss.backward()
             optimizer.step()
-            
+
             if print_update:
                 curr_time = time.monotonic()
                 if curr_time - prev_print_time > 10:
@@ -75,7 +75,6 @@ def train(
         test_accs[epoch] = test_acc
 
     return losses, train_accs, test_accs
-
 
 # TODO make including the variance optional
 def construct_mean_tensors(emb: Embedding, tweets: Tweets, include_var: bool):
@@ -356,6 +355,7 @@ def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     print("Building model")
     model = ConvolutionalModule(n_features=n_features, n_filters=n_filters, activation_func=activation_func)
     model.to(DEVICE)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     return train(
@@ -364,7 +364,7 @@ def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
         x_test, y_test, lens_test,
         loss_func, optimizer, epochs, batch_size,
         convolutional=True
-    )
+        )
 
 class SelectedModel(Enum):
     CNN = auto()
