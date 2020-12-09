@@ -142,37 +142,6 @@ def construct_sequential_tensors(emb: Embedding, tweets: Tweets, min_length: int
 
     return x[:tweet_i].to(DEVICE), y[:tweet_i].to(DEVICE), lens[:tweet_i].to(DEVICE)
 
-
-class RecurrentModel(torch.nn.Module):
-    def __init__(self, emb_size: int):
-        super().__init__()
-
-        HIDDEN_SIZE = 400
-
-        self.lstm = torch.nn.LSTM(
-            input_size=emb_size,
-            hidden_size=HIDDEN_SIZE, num_layers=3,
-        )
-
-        self.seq = torch.nn.Sequential(
-            torch.nn.Dropout(),
-            torch.nn.Linear(HIDDEN_SIZE, 50),
-            torch.nn.ReLU(),
-            torch.nn.Dropout(),
-            torch.nn.Linear(50, 2),
-        )
-
-    def forward(self, x, lens, ws):
-        x = ws[x, :]
-
-        x = torch.nn.utils.rnn.pack_padded_sequence(x, lens, batch_first=True, enforce_sorted=False)
-        x, _ = self.lstm.forward(x)
-        x, _ = torch.nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
-
-        x = x[torch.arange(len(x)), lens - 1]
-        x = self.seq.forward(x)
-        return x
-
 def parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs, batch_size, 
                         x_train, y_train, lens_train, x_test, y_test, lens_test):
     #TODO: Find best dropout_rate and best batch_size!
@@ -209,6 +178,36 @@ def parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs, batch_s
                                 opt_activation_func = activation_func
                                 
     return opt_filters, opt_activation_func
+
+class RecurrentModel(torch.nn.Module):
+    def __init__(self, emb_size: int):
+        super().__init__()
+
+        HIDDEN_SIZE = 400
+
+        self.lstm = torch.nn.LSTM(
+            input_size=emb_size,
+            hidden_size=HIDDEN_SIZE, num_layers=3,
+        )
+
+        self.seq = torch.nn.Sequential(
+            torch.nn.Dropout(),
+            torch.nn.Linear(HIDDEN_SIZE, 50),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(),
+            torch.nn.Linear(50, 2),
+        )
+
+    def forward(self, x, lens, ws):
+        x = ws[x, :]
+
+        x = torch.nn.utils.rnn.pack_padded_sequence(x, lens, batch_first=True, enforce_sorted=False)
+        x, _ = self.lstm.forward(x)
+        x, _ = torch.nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
+
+        x = x[torch.arange(len(x)), lens - 1]
+        x = self.seq.forward(x)
+        return x
     
 class ConvolutionalModule(torch.nn.Module):
     def __init__(
@@ -337,7 +336,7 @@ def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     crop_length = 40
     epochs = 10
     n_features = emb.size
-    batch_size = 10
+    batch_size = 50
     n_filters = [10, 10, 10, 10]
     activation_func = torch.nn.functional.relu
 
@@ -348,10 +347,10 @@ def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     x_test, y_test, lens_test = construct_sequential_tensors(emb, tweets_test, min_length, crop_length)
 
     loss_func = torch.nn.CrossEntropyLoss()
-    
+    """
     n_filters, activation_func = parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs, batch_size, 
                                                     x_train, y_train, lens_train, x_test, y_test, lens_test)
-
+    """
     print("Building model")
     model = ConvolutionalModule(n_features=n_features, n_filters=n_filters, activation_func=activation_func)
     model.to(DEVICE)
@@ -374,8 +373,8 @@ class SelectedModel(Enum):
 
 
 def main():
-    train_count = 100
-    test_count = 50
+    train_count = 50_000
+    test_count = 2500
     selected_model = SelectedModel.CNN
 
     set_seeds(None)
