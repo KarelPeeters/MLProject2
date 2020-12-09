@@ -334,7 +334,7 @@ class SelectedModel(Enum):
     NEURAL_MEAN = auto()
 
 
-def main():
+def main_train_model():
     train_count = 400_000
     test_count = 20_000
     selected_model = SelectedModel.RNN
@@ -366,6 +366,54 @@ def main():
     pyplot.plot(test_accs, label="test acc")
     pyplot.legend()
     pyplot.show()
+
+
+def save_submission(model, emb: Embedding):
+    ws = torch.tensor(emb.ws, device=DEVICE)
+
+    print("Loading submission tweets")
+    with open("../data/test_data.txt") as f:
+        submission_tweets = []
+        for line in f.readlines():
+            tweet = line[line.find(",") + 1:]
+            submission_tweets.append(tweet)
+
+    tweet_count = len(submission_tweets)
+
+    # these tweets are not really positive but we ignore y anyway
+    tweets = Tweets(pos=submission_tweets, neg=[])
+
+    print("Constructing tensors")
+    x_all, _, lens_all = construct_sequential_tensors(emb, tweets, 0, 40)
+
+    # ignore the empty tweets
+    non_empty_indices, = lens_all.nonzero(as_tuple=True)
+    x = x_all[non_empty_indices]
+    lens = lens_all[non_empty_indices]
+
+    print("Running through model")
+    y_pred = model.forward(x, lens, ws)
+    y_pred_int = y_pred.argmax(dim=1)
+
+    y_pred_int_all = torch.zeros(tweet_count, dtype=torch.long, device=DEVICE)
+    y_pred_int_all[non_empty_indices] = y_pred_int
+
+    print("Saving output")
+    with open("../data/output/submission.csv", "w") as f:
+        f.write("Id,Prediction\n")
+        for i in range(tweet_count):
+            f.write(f"{i + 1},{y_pred_int_all[i].item() * 2 - 1}\n")
+
+
+def main_submission():
+    model = torch.load("../data/output/rnn_98_model.pt")
+    emb = load_embedding(10_000, 0, 200)
+    save_submission(model, emb)
+
+
+def main():
+    # main_submission()
+    main_train_model()
 
 
 if __name__ == '__main__':

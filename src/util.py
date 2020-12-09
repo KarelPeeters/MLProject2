@@ -34,10 +34,11 @@ class Tweets:
 
 
 def load_tweets():
+    # deduplicate tweets as well so they don't leak between the train/test set later
     with open("../data/twitter-datasets/train_pos_full.txt", encoding="latin-1") as f:
-        pos = [s.strip() for s in f.readlines()]
+        pos = list({s.strip() for s in f.readlines()})
     with open("../data/twitter-datasets/train_neg_full.txt", encoding="latin-1") as f:
-        neg = [s.strip() for s in f.readlines()]
+        neg = list({s.strip() for s in f.readlines()})
 
     return Tweets(pos=pos, neg=neg)
 
