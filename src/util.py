@@ -113,3 +113,9 @@ class TimeEstimator:
 
         time_left = self._ema_total_time * (1 - progress / self._total_progress)
         return str(datetime.timedelta(seconds=time_left)).split(".")[0]
+
+
+def add_zero_row(ws):
+    zeros_row = torch.zeros(1, ws.shape[1], device=ws.device)
+    ws = torch.cat((zeros_row, ws), dim=0)
+    return ws

@@ -8,7 +8,7 @@ from matplotlib import pyplot
 
 from embedding import Embedding, load_embedding
 from split_datasets import load_tweets_split
-from util import tweet_as_tokens, Tweets, accuracy, set_seeds, drop_none, DEVICE, TimeEstimator
+from util import tweet_as_tokens, Tweets, accuracy, set_seeds, drop_none, DEVICE, TimeEstimator, add_zero_row
 
 
 def calc_test_accuracy(
@@ -39,8 +39,10 @@ def train(
         x_test, y_test, lens_test,
         loss_func, optimizer, epochs: int, batch_size: int,
         save_model_path: Optional[str] = None,
+        print_update: bool = True,
 ):
-    print("Training")
+    if print_update:
+        print("Training")
 
     losses = np.zeros(epochs)
     train_accs = np.zeros(epochs)
@@ -78,14 +80,16 @@ def train(
             optimizer.step()
 
             curr_time = time.monotonic()
-            if curr_time - prev_print_time > 10:
+            if print_update and curr_time - prev_print_time > 10:
                 eta = timer.update(epoch * batch_size + b)
                 print(f"  batch {b}/{batch_count}: loss {batch_loss.item():.4f} train acc {batch_acc:.4f} eta {eta}")
                 prev_print_time = curr_time
 
         test_acc = calc_test_accuracy(model, ws, x_test, y_test, lens_test, batch_size)
-        eta = timer.update((epoch + 1) * batch_count)
-        print(f'Epoch {epoch}/{epochs}, loss {train_loss:.4f} acc {train_acc:.4f} test_acc {test_acc:.4f} eta {eta}')
+        if print_update:
+            eta = timer.update((epoch + 1) * batch_count)
+            print(
+                f'Epoch {epoch}/{epochs}, loss {train_loss:.4f} acc {train_acc:.4f} test_acc {test_acc:.4f} eta {eta}')
 
         losses[epoch] = train_loss
         train_accs[epoch] = train_acc
@@ -97,63 +101,7 @@ def train(
     return losses, train_accs, test_accs
 
 
-class convolutional_nn(torch.nn.Module):
-    def __init__(self, n_features, n_convols=3, n_filters=None, n_filters_const=10):
-        super().__init__()
-
-        if n_filters is None:
-            self.n_filters = np.ones(n_convols, dtype=int) * n_filters_const
-        else:
-            self.n_filters = n_filters
-
-        self.n_convols = n_convols
-        self.convs = torch.nn.ModuleList()
-        for i in range(self.n_convols):
-            self.convs.append(torch.nn.Conv1d(n_features, self.n_filters[i], kernel_size=i + 2))
-
-        temp_size = 100
-        self.linear1 = torch.nn.Linear(int(np.sum(self.n_filters)), temp_size)
-        self.linear2 = torch.nn.Linear(temp_size, 2)
-
-    def forward(self, x, lens, ws):
-        x = ws[x, :].permute(0, 2, 1)
-
-        relu = torch.nn.functional.relu
-        # apply filters and take maximum element
-        max_vals = []
-        # print("x=", x.shape)
-        for i in range(self.n_convols):
-            conv_size = i + 2
-            conv = self.convs[i](x)
-
-            arange = torch.arange(x.shape[2] - conv_size + 1, device=x.device)[None, :]
-            mask = arange[None, :] < (lens[:, None] - conv_size + 1)
-            mask = mask.permute(1, 0, 2)
-
-            neg_inf_tensor = torch.full_like(conv, float("-inf"), device=x.device)
-            replaced = torch.where(mask, neg_inf_tensor, conv)
-
-            max_taken = torch.max(replaced, dim=2).values
-            max_vals.append(max_taken)
-
-        # concatenate
-        x2 = torch.cat(max_vals, dim=1)
-        x2 = torch.where(x2.eq(float("-inf")), torch.zeros_like(x2), x2)
-        x = x2
-
-        x = torch.max(torch.zeros_like(x), x)
-
-        # regularize
-        x = torch.nn.functional.dropout(x, training=self.training)
-
-        # do linear transform + relu
-        x = relu(self.linear1(x))
-        x = self.linear2(x)
-        return x
-
-
-# TODO make including the variance optional
-def construct_mean_tensors(emb: Embedding, tweets: Tweets, include_var: bool):
+def construct_mean_tensors(emb: Embedding, tweets: Tweets, include_var: bool, zero_row: bool):
     total_tweet_count = len(tweets.pos) + len(tweets.neg)
 
     x = torch.empty(total_tweet_count, emb.size * (1 + include_var))
@@ -182,7 +130,7 @@ def construct_mean_tensors(emb: Embedding, tweets: Tweets, include_var: bool):
     return x[:next_i].to(DEVICE), y[:next_i].to(DEVICE)
 
 
-def construct_sequential_tensors(emb: Embedding, tweets: Tweets, min_length: int, crop_length: int):
+def construct_sequential_tensors(emb: Embedding, tweets: Tweets, min_length: int, crop_length: int, zero_row: bool):
     total_tweet_count = len(tweets.pos) + len(tweets.neg)
 
     # todo maybe store index in x instead of expanded embedding
@@ -204,7 +152,9 @@ def construct_sequential_tensors(emb: Embedding, tweets: Tweets, min_length: int
                 cropped_count += 1
 
             cropped_len = min(crop_length, len(tokens))
-            x[tweet_i, :cropped_len] = torch.tensor(tokens[:cropped_len])
+
+            # +1 for index correction when adding a row of zeros in ws
+            x[tweet_i, :cropped_len] = torch.tensor(tokens[:cropped_len]) + int(zero_row)
 
             y[tweet_i] = pos
             lens[tweet_i] = cropped_len
@@ -216,6 +166,45 @@ def construct_sequential_tensors(emb: Embedding, tweets: Tweets, min_length: int
         print(f"Skipped {too_short_count} ({too_short_count / total_tweet_count :.4f}) tweets that are too short")
 
     return x[:tweet_i].to(DEVICE), y[:tweet_i].to(DEVICE), lens[:tweet_i].to(DEVICE)
+
+
+def parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs, batch_size,
+                       x_train, y_train, lens_train, x_test, y_test, lens_test):
+    # TODO: Find best dropout_rate and best batch_size!
+    filters = np.arange(start=5, stop=35, step=10, dtype=int)
+    opt_filters = np.zeros(4)
+    opt_activation_func = ""
+    max_test_acc = float('-inf')
+
+    for activation_func in [torch.nn.functional.softmax, torch.nn.functional.relu]:
+        for n_filters_2 in filters:
+            for n_filters_3 in filters:
+                for n_filters_4 in filters:
+                    for n_filters_5 in filters:
+                        model = ConvolutionalModule(n_features=n_features,
+                                                    n_filters=[n_filters_2, n_filters_3, n_filters_4, n_filters_5],
+                                                    activation_func=activation_func, dropout_rate=0.5)
+                        model.to(DEVICE)
+                        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+                        print(f"Training with: \nn_filters_2 = {n_filters_2}, n_filters_3 = {n_filters_3}," +
+                              f"n_filters_4 = {n_filters_4}, n_filters_5 = {n_filters_5}" +
+                              f"\nactivation_func = {activation_func}")
+                        losses, train_accs, test_accs = train(
+                            model, ws,
+                            x_train, y_train, lens_train,
+                            x_test, y_test, lens_test,
+                            loss_func, optimizer, epochs, batch_size,
+                            print_update=False
+                        )
+                        max_test_acc_temp = test_accs.max()
+                        print(f"Maximum test accuracy = {max_test_acc_temp}")
+                        if max_test_acc_temp > max_test_acc:
+                            print("New optimum parameters!")
+                            max_test_acc = max_test_acc_temp
+                            opt_filters = np.array([n_filters_2, n_filters_3, n_filters_4, n_filters_5])
+                            opt_activation_func = activation_func
+
+    return opt_filters, opt_activation_func
 
 
 class RecurrentModel(torch.nn.Module):
@@ -250,15 +239,80 @@ class RecurrentModel(torch.nn.Module):
         return x
 
 
+class ConvolutionalModule(torch.nn.Module):
+    def __init__(
+            self,
+            n_features, n_convols=3, n_filters=None, n_filters_const=10,
+            activation_func=torch.nn.functional.relu, dropout_rate=0.5
+    ):
+        super().__init__()
+
+        if n_filters is None:
+            self.n_filters = np.ones(n_convols, dtype=int) * n_filters_const
+        else:
+            n_convols = len(n_filters)
+            self.n_filters = n_filters
+
+        self.activation_func = activation_func
+        self.dropout_rate = dropout_rate
+        self.n_convols = n_convols
+        self.convs = torch.nn.ModuleList()
+        for i in range(self.n_convols):
+            self.convs.append(torch.nn.Conv1d(n_features, self.n_filters[i], kernel_size=i + 2, padding=(i + 2) // 2))
+
+        temp_size = 50
+        self.linear1 = torch.nn.Linear(np.sum(self.n_filters), temp_size)
+        self.linear2 = torch.nn.Linear(temp_size, 2)
+
+    def forward(self, x, lens, ws, training=True):
+        x = ws[x, :].permute(0, 2, 1)
+        # apply filters and take maximum element
+        max_vals = []
+        for i in range(self.n_convols):
+            conv_size = i + 2
+            conv = self.convs[i](x)
+            """
+            max_taken = torch.max(conv, dim=2).values
+            max_vals.append(max_taken)
+            """
+            # create a mask that picks out only sensible values of the convolution, i.e. for a tweet of length l and a
+            # convolution with kernel size k, we need to pick the first l - k%2 + 1 values of the convolution
+            arange = torch.arange(x.shape[2] + 1 - conv_size % 2, device=DEVICE)[None, :]
+            mask = arange[None, :] < (lens[:, None] + 1 - conv_size % 2)
+            mask = mask.permute(1, 0, 2)
+
+            # replace values that are not sensible with -inf, to exclude them from the maximum
+            neg_inf_tensor = torch.full_like(conv, float("-inf"), device=DEVICE)
+            replaced = torch.where(mask, conv, neg_inf_tensor)
+            max_taken = torch.max(replaced, dim=2).values
+            max_vals.append(max_taken)
+
+        # concatenate
+        x = torch.cat(max_vals, dim=1)
+
+        # regularize
+        if training:
+            x = torch.nn.functional.dropout(x, p=self.dropout_rate, training=self.training)
+
+        # do linear trafo + softmax
+        if self.activation_func == torch.nn.functional.softmax:
+            x = self.activation_func(self.linear1(x), dim=1)
+        else:
+            x = self.activation_func(self.linear1(x))
+
+        x = self.linear2(x)
+        return x
+
+
 def main_mean_neural(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     learning_rate = 1e-3
     include_var = False
     batch_size = 50
-    epochs = 20
+    epochs = 100
 
     print("Constructing tensors")
-    x_train, y_train = construct_mean_tensors(emb, tweets_train, include_var)
-    x_test, y_test = construct_mean_tensors(emb, tweets_test, include_var)
+    x_train, y_train = construct_mean_tensors(emb, tweets_train, include_var, zero_row=False)
+    x_test, y_test = construct_mean_tensors(emb, tweets_test, include_var, zero_row=False)
 
     print("Building model")
     model = torch.nn.Sequential(
@@ -281,43 +335,17 @@ def main_mean_neural(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     )
 
 
-def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
-    learning_rate = 1e-3
-    min_length = 5
-    crop_length = 40
-    epochs = 20
-    batch_size = 10
-
-    print("Constructing tensors")
-    ws = torch.tensor(emb.ws, device=DEVICE)
-    x_train, y_train, lens_train = construct_sequential_tensors(emb, tweets_train, min_length, crop_length)
-    x_test, y_test, lens_test = construct_sequential_tensors(emb, tweets_test, min_length, crop_length)
-
-    print("Building model")
-    model = convolutional_nn(n_features=emb.size, n_convols=4, n_filters_const=10)
-    model.to(DEVICE)
-
-    loss_func = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
-    return train(
-        model, ws,
-        x_train, y_train, lens_train,
-        x_test, y_test, lens_test,
-        loss_func, optimizer, epochs, batch_size
-    )
-
-
 def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     learning_rate = 1e-3
-    epochs = 10
+    epochs = 20
     min_length = 1
     crop_length = 40
 
     print("Constructing tensors")
     ws = torch.tensor(emb.ws, device=DEVICE)
-    x_train, y_train, lens_train = construct_sequential_tensors(emb, tweets_train, min_length, crop_length)
-    x_test, y_test, lens_test = construct_sequential_tensors(emb, tweets_test, min_length, crop_length)
+    x_train, y_train, lens_train = construct_sequential_tensors(emb, tweets_train, min_length, crop_length,
+                                                                zero_row=False)
+    x_test, y_test, lens_test = construct_sequential_tensors(emb, tweets_test, min_length, crop_length, zero_row=False)
 
     print("Building model")
     model = RecurrentModel(emb_size=emb.size)
@@ -329,8 +357,43 @@ def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     return train(
         model, ws,
         x_train, y_train, lens_train, x_test, y_test, lens_test,
-        cost_func, optimizer, epochs, batch_size=1000,
-        save_model_path="../data/output/rnn_model.pt",
+        loss_func=cost_func, optimizer=optimizer, epochs=epochs, batch_size=10,
+    )
+
+
+def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
+    learning_rate = 1e-3
+    min_length = 5
+    crop_length = 40
+    epochs = 10
+    n_features = emb.size
+    batch_size = 200
+    n_filters = [40, 40, 40, 40]
+    activation_func = torch.nn.functional.relu
+
+    print("Constructing tensors")
+    ws = add_zero_row(torch.tensor(emb.ws)).to(DEVICE)
+    x_train, y_train, lens_train = construct_sequential_tensors(emb, tweets_train, min_length, crop_length,
+                                                                zero_row=True)
+    x_test, y_test, lens_test = construct_sequential_tensors(emb, tweets_test, min_length, crop_length,
+                                                             zero_row=True)
+
+    loss_func = torch.nn.CrossEntropyLoss()
+    """
+    n_filters, activation_func = parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs, batch_size, 
+                                                    x_train, y_train, lens_train, x_test, y_test, lens_test)
+    """
+    print("Building model")
+    model = ConvolutionalModule(n_features=n_features, n_filters=n_filters, activation_func=activation_func)
+    model.to(DEVICE)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    return train(
+        model, ws,
+        x_train, y_train, lens_train,
+        x_test, y_test, lens_test,
+        loss_func, optimizer, epochs, batch_size,
     )
 
 
@@ -342,9 +405,9 @@ class SelectedModel(Enum):
 
 
 def main():
-    train_count = 400_000
-    test_count = 20_000
-    selected_model = SelectedModel.RNN
+    train_count = 500_000
+    test_count = 10_000
+    selected_model = SelectedModel.CNN
 
     set_seeds(None)
 
