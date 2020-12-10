@@ -172,7 +172,7 @@ def main():
         input_file,
         max_word_count, context_dist,
         emb_size,
-        batch_size=4000, epochs=10,
+        batch_size=2000, epochs=40,
         n_max=400, alpha=3 / 4,
     )
 
