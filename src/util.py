@@ -1,9 +1,14 @@
+import datetime
 import random
+import time
 from dataclasses import dataclass
 from typing import List, Optional
 
 import numpy as np
 import torch
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using device {DEVICE}")
 
 
 @dataclass
@@ -32,21 +37,14 @@ class Tweets:
 
         return result
 
-
-def load_tweets():
-    # deduplicate tweets as well so they don't leak between the train/test set later
-    with open("../data/twitter-datasets/train_pos_full.txt", encoding="latin-1") as f:
-        pos = list({s.strip() for s in f.readlines()})
-    with open("../data/twitter-datasets/train_neg_full.txt", encoding="latin-1") as f:
-        neg = list({s.strip() for s in f.readlines()})
-
-    return Tweets(pos=pos, neg=neg)
+    def take(self, count: int):
+        return self.split([count])[0]
 
 
 def tweet_as_tokens(tweet: str, word_dict: dict) -> List[int]:
     """Convert a tweet into a list of word indices"""
     tokens = []
-    for word in tweet.split(" "):
+    for word in tweet.strip().split(" "):
         index = word_dict.get(word, None)
         if index is not None:
             tokens.append(index)
@@ -76,3 +74,42 @@ def set_seeds(seed: Optional[int] = None):
     np.random.seed(seed)
     torch.manual_seed(seed)
     random.seed(seed)
+
+
+def drop_none(*args):
+    return [x for x in args if x is not None]
+
+
+class TimeEstimator:
+    """Small utility class that predicts how long an iterative process will take"""
+
+    def __init__(self, total_progress: float):
+        self._total_progress = total_progress
+        self.alpha = 0.9
+
+        self._prev_progress = 0.0
+        self._prev_time: Optional[float] = None
+        self._ema_total_time = None
+
+    def update(self, progress: float):
+        now = time.monotonic()
+
+        if self._prev_time is None:
+            self._prev_time = now
+            self._prev_progress = progress
+            return None
+
+        delta_time = now - self._prev_time
+        delta_progress = (progress - self._prev_progress) / self._total_progress
+        pred_total_time = delta_time / delta_progress
+
+        self._prev_time = now
+        self._prev_progress = progress
+
+        if self._ema_total_time is None:
+            self._ema_total_time = pred_total_time
+        else:
+            self._ema_total_time = self.alpha * self._ema_total_time + (1 - self.alpha) * pred_total_time
+
+        time_left = self._ema_total_time * (1 - progress / self._total_progress)
+        return str(datetime.timedelta(seconds=time_left)).split(".")[0]

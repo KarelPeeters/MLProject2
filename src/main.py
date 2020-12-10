@@ -7,10 +7,30 @@ import torch
 from matplotlib import pyplot
 
 from embedding import Embedding, load_embedding
-from util import tweet_as_tokens, Tweets, load_tweets, accuracy, set_seeds
+from split_datasets import load_tweets_split
+from util import tweet_as_tokens, Tweets, accuracy, set_seeds, drop_none, DEVICE, TimeEstimator
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device {DEVICE}")
+
+def calc_test_accuracy(
+        model, ws,
+        x_test, y_test, lens_test,
+        batch_size: int,
+):
+    model.eval()
+    batch_count = len(x_test) // batch_size
+    test_acc = 0
+
+    for b in range(batch_count):
+        x_test_batch = x_test[b * batch_size:(b + 1) * batch_size]
+        y_test_batch = y_test[b * batch_size:(b + 1) * batch_size]
+        lens_batch = lens_test[b * batch_size:(b + 1) * batch_size] if lens_test is not None else None
+
+        predictions = model.forward(*drop_none(x_test_batch, lens_batch, ws))
+
+        batch_acc = accuracy(predictions, y_test_batch)
+        test_acc += batch_acc / batch_count
+
+    return test_acc
 
 
 def train(
@@ -22,18 +42,17 @@ def train(
 ):
     print("Training")
 
-    def drop_none(*args):
-        return [x for x in args if x is not None]
-
     losses = np.zeros(epochs)
     train_accs = np.zeros(epochs)
     test_accs = np.zeros(epochs)
+
+    batch_count = len(x_train) // batch_size
+    timer = TimeEstimator(epochs * batch_count)
 
     for epoch in range(epochs):
         model.train()
 
         shuffle = torch.randperm(len(x_train), device=DEVICE)
-        batch_count = len(x_train) // batch_size
 
         train_loss = 0
         train_acc = 0
@@ -60,25 +79,13 @@ def train(
 
             curr_time = time.monotonic()
             if curr_time - prev_print_time > 10:
-                print(f"  batch {b}/{batch_count}: loss {batch_loss.item():.4f} train acc {batch_acc:.4f}")
+                eta = timer.update(epoch * batch_size + b)
+                print(f"  batch {b}/{batch_count}: loss {batch_loss.item():.4f} train acc {batch_acc:.4f} eta {eta}")
                 prev_print_time = curr_time
 
-        # do batching on test as well to conserve memory
-        model.eval()
-        batch_count = len(x_test) // batch_size
-        test_acc = 0
-
-        for b in range(batch_count):
-            x_test_batch = x_test[b * batch_size:(b + 1) * batch_size]
-            y_test_batch = y_test[b * batch_size:(b + 1) * batch_size]
-            lens_batch = lens_test[b * batch_size:(b + 1) * batch_size] if lens_test is not None else None
-
-            predictions = model.forward(*drop_none(x_test_batch, lens_batch, ws))
-
-            batch_acc = accuracy(predictions, y_test_batch)
-            test_acc += batch_acc / batch_count
-
-        print(f'Epoch {epoch}/{epochs}, loss {train_loss:.4f} acc {train_acc:.4f} test_acc {test_acc:.4f}')
+        test_acc = calc_test_accuracy(model, ws, x_test, y_test, lens_test, batch_size)
+        eta = timer.update((epoch + 1) * batch_count)
+        print(f'Epoch {epoch}/{epochs}, loss {train_loss:.4f} acc {train_acc:.4f} test_acc {test_acc:.4f} eta {eta}')
 
         losses[epoch] = train_loss
         train_accs[epoch] = train_acc
@@ -303,7 +310,7 @@ def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
 
 def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     learning_rate = 1e-3
-    epochs = 40
+    epochs = 10
     min_length = 1
     crop_length = 40
 
@@ -334,7 +341,7 @@ class SelectedModel(Enum):
     NEURAL_MEAN = auto()
 
 
-def main_train_model():
+def main():
     train_count = 400_000
     test_count = 20_000
     selected_model = SelectedModel.RNN
@@ -345,10 +352,7 @@ def main_train_model():
     emb = load_embedding(10_000, 0, 200)
 
     print("Loading tweets")
-    tweets = load_tweets()
-
-    print("Splitting tweets")
-    tweets_train, tweets_test = tweets.split([train_count, test_count])
+    tweets_train, tweets_test = load_tweets_split(train_count, test_count)
 
     if selected_model == SelectedModel.CNN:
         losses, train_accs, test_accs = main_cnn(emb, tweets_train, tweets_test)
@@ -364,57 +368,12 @@ def main_train_model():
     pyplot.plot(losses, label="loss")
     pyplot.plot(train_accs, label="train acc")
     pyplot.plot(test_accs, label="test acc")
+    pyplot.ylabel("epoch")
+    pyplot.xlabel("performance")
     pyplot.legend()
     pyplot.show()
 
 
-def save_submission(model, emb: Embedding):
-    ws = torch.tensor(emb.ws, device=DEVICE)
-
-    print("Loading submission tweets")
-    with open("../data/test_data.txt") as f:
-        submission_tweets = []
-        for line in f.readlines():
-            tweet = line[line.find(",") + 1:]
-            submission_tweets.append(tweet)
-
-    tweet_count = len(submission_tweets)
-
-    # these tweets are not really positive but we ignore y anyway
-    tweets = Tweets(pos=submission_tweets, neg=[])
-
-    print("Constructing tensors")
-    x_all, _, lens_all = construct_sequential_tensors(emb, tweets, 0, 40)
-
-    # ignore the empty tweets
-    non_empty_indices, = lens_all.nonzero(as_tuple=True)
-    x = x_all[non_empty_indices]
-    lens = lens_all[non_empty_indices]
-
-    print("Running through model")
-    y_pred = model.forward(x, lens, ws)
-    y_pred_int = y_pred.argmax(dim=1)
-
-    y_pred_int_all = torch.zeros(tweet_count, dtype=torch.long, device=DEVICE)
-    y_pred_int_all[non_empty_indices] = y_pred_int
-
-    print("Saving output")
-    with open("../data/output/submission.csv", "w") as f:
-        f.write("Id,Prediction\n")
-        for i in range(tweet_count):
-            f.write(f"{i + 1},{y_pred_int_all[i].item() * 2 - 1}\n")
-
-
-def main_submission():
-    model = torch.load("../data/output/rnn_98_model.pt")
-    emb = load_embedding(10_000, 0, 200)
-    save_submission(model, emb)
-
-
-def main():
-    # main_submission()
-    main_train_model()
-
-
 if __name__ == '__main__':
+    set_seeds()
     main()

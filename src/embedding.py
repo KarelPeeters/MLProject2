@@ -6,6 +6,9 @@ import numpy as np
 import torch
 from torch.optim import Optimizer
 
+from split_datasets import ALL_TRAIN_TWEETS_PATH, create_split_files
+from util import TimeEstimator
+
 
 def get_file_paths(max_word_count: int, context_dist: Optional[int], emb_size: int):
     context_dist = context_dist or 0
@@ -53,6 +56,7 @@ def train_embedding_from_cooc(
     n = torch.tensor(cooc[:, 2], dtype=torch.float, device=device)
 
     batch_count = len(cooc.data) // batch_size
+    timer = TimeEstimator(batch_count * epochs)
 
     for epoch in range(epochs):
         shuffle = torch.randperm(len(cooc), device=device)
@@ -60,7 +64,7 @@ def train_embedding_from_cooc(
         avg_cost = 0
 
         for b in range(batch_count):
-            i_batch = shuffle[b * batch_size:b * batch_size + batch_size]
+            i_batch = shuffle[b * batch_size:(b + 1) * batch_size]
 
             ix_batch = ix[i_batch]
             iy_batch = iy[i_batch]
@@ -83,7 +87,7 @@ def train_embedding_from_cooc(
             optimizer.step()
 
             if b % 1000 == 0:
-                print(f"batch {b} cost {cost}")
+                print(f"   batch {b} cost {cost}, eta {timer.update(batch_count * epoch + b)}")
 
         print(f"epoch {epoch}, cost {avg_cost}")
 
@@ -92,7 +96,13 @@ def train_embedding_from_cooc(
     return result
 
 
-def create_embedding(input_file, max_word_count, context_dist, emb_size):
+def create_embedding(
+        input_file,
+        max_word_count, context_dist,
+        emb_size: int,
+        batch_size: int, epochs: int,
+        n_max: int, alpha: float,
+):
     word_file, cooc_file, w_file = get_file_paths(max_word_count, context_dist, emb_size)
 
     print("Constructing cooc")
@@ -110,8 +120,11 @@ def create_embedding(input_file, max_word_count, context_dist, emb_size):
         return torch.optim.Adam(params)
 
     w = train_embedding_from_cooc(
-        word_count=word_count, cooc=cooc, size=200,
-        epochs=10, batch_size=200, device="cuda", optimizer=optimizer, n_max=200,
+        word_count=word_count, cooc=cooc,
+        size=emb_size,
+        epochs=epochs, batch_size=batch_size,
+        device="cuda", optimizer=optimizer,
+        n_max=n_max, alpha=alpha,
     )
 
     print("Saving output")
@@ -148,14 +161,20 @@ def load_embedding(max_word_count: int, context_dist: Optional[int], emb_size: i
 
 
 def main():
-    # TODO we really need to split the test/train data before this point, right now we're just using all of the data
-    input_file = "../data/output/all_tweets.txt"
+    create_split_files(force=False)
+    input_file = ALL_TRAIN_TWEETS_PATH
 
     max_word_count: int = 10_000
-    context_dist: Optional[int] = 3
+    context_dist: Optional[int] = 0
     emb_size: int = 200
 
-    create_embedding(input_file, max_word_count, context_dist, emb_size)
+    create_embedding(
+        input_file,
+        max_word_count, context_dist,
+        emb_size,
+        batch_size=4000, epochs=10,
+        n_max=400, alpha=3 / 4,
+    )
 
 
 if __name__ == '__main__':
