@@ -2,12 +2,25 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 import numpy as np
+import random
 
 
 @dataclass
 class Tweets:
     pos: [str]
     neg: [str]
+    
+        
+    def split(self, train_ratio) -> ('Tweets', 'Tweets'):
+        def split_part(tweets):
+            shuffled = list(tweets)
+            random.shuffle(shuffled)
+            split_index = int(train_ratio * len(tweets))
+            return tweets[:split_index], tweets[:split_index]
+
+        pos_train, pos_test = split_part(self.pos)
+        neg_train, neg_test = split_part(self.neg)
+        return Tweets(pos=pos_train, neg=neg_train), Tweets(pos=pos_test, neg=neg_test)
 
 
 def load_tweets():
@@ -57,13 +70,13 @@ def load_embedding(name: str):
     return Embedding(words=words, word_dict=word_dict, ws=ws, size=ws.shape[1])
     
     
-def split_data(x, y, ratio):
+def split_data(x, y, z, ratio):
     """
     Split the dataset based according to ratio. 
     """
     perm = np.random.permutation(np.arange(len(x)))
-    x, y = x[perm], y[perm]
+    x, y, z = x[perm], y[perm], z[perm]
 
     split = int(len(x) * ratio)
-    return x[:split], y[:split], x[split:], y[split:]
+    return x[:split], y[:split], z[:split], x[split:], y[split:], z[split:]
 
