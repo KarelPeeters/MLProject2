@@ -1,14 +1,12 @@
-import numpy as np
-
 from embedding import load_embedding
 
-emb = load_embedding(10_000, 3, 200)
+emb = load_embedding(10_000, 0, 200)
 
-print("[[ Similar to cool ]]")
-for word in emb.find(emb.embed("cool"), 20):
-    print(word)
+print()
+BASE_WORDS = ["math", "madrid", "5", "ball", "happy", "sad"]
+for word in BASE_WORDS:
+    similar_words = emb.find(emb.embed(word), 6)[1:]
+    print(f"{word} & {', '.join(similar_words)} \\\\")
+print()
 
-print("[[ Queen? ]]")
-for word in emb.find(emb.embed("king") - emb.embed("guy") + emb.embed("girl"), 8):
-    print(word)
-
+print(emb.find(emb.embed("king") - emb.embed("man") + emb.embed("woman"), 10))
