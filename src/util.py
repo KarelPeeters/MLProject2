@@ -28,12 +28,12 @@ class Tweets:
         next_i = 0
 
         for count in counts:
-            next_i += count
-
             result.append(Tweets(
                 pos=shuffled_pos[next_i:next_i + count],
                 neg=shuffled_neg[next_i:next_i + count],
             ))
+
+            next_i += count
 
         return result
 

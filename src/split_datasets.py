@@ -1,5 +1,6 @@
 import os
 import random
+from typing import Optional
 
 from util import Tweets
 
@@ -57,7 +58,7 @@ def create_split_files(force: bool):
         f.writelines(neg[:train_count])
 
 
-def load_tweets_split(train_count: int, test_count: int) -> (Tweets, Tweets):
+def load_tweets_split(train_count: Optional[int], test_count: Optional[int]) -> (Tweets, Tweets):
     create_split_files(force=False)
 
     result = []
@@ -68,12 +69,13 @@ def load_tweets_split(train_count: int, test_count: int) -> (Tweets, Tweets):
             tweets = []
             with open(f"{BASE}/{part}_{y}.txt", encoding="utf-8") as f:
                 while tweet := f.readline():
-                    if len(tweets) == part_count:
+                    if part_count is not None and len(tweets) == part_count:
                         break
                     tweets.append(tweet.strip())
 
             random.shuffle(tweets)
-            assert len(tweets) == part_count, f"Not enough tweets, need {part_count} but got {len(tweets)}"
+            assert part_count is None or len(tweets) == part_count,\
+                f"Not enough tweets, need {part_count} but got {len(tweets)}"
             args[y] = tweets
 
         result.append(Tweets(**args))

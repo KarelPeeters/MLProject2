@@ -44,6 +44,10 @@ def train(
     if print_update:
         print("Training")
 
+    x_train_test = x_train[:len(x_train)]
+    y_train_test = y_train[:len(x_train)]
+    lens_train_test = lens_train[:len(x_train)] if lens_train is not None else None
+
     losses = np.zeros(epochs)
     train_accs = np.zeros(epochs)
     test_accs = np.zeros(epochs)
@@ -73,7 +77,6 @@ def train(
             batch_acc = accuracy(predictions, y_train_batch)
 
             train_loss += batch_loss.item() / batch_count
-            train_acc += batch_acc / batch_count
 
             optimizer.zero_grad()
             batch_loss.backward()
@@ -85,6 +88,7 @@ def train(
                 print(f"  batch {b}/{batch_count}: loss {batch_loss.item():.4f} train acc {batch_acc:.4f} eta {eta}")
                 prev_print_time = curr_time
 
+        train_acc = calc_test_accuracy(model, ws, x_train_test, y_train_test, lens_train_test, batch_size)
         test_acc = calc_test_accuracy(model, ws, x_test, y_test, lens_test, batch_size)
         if print_update:
             eta = timer.update((epoch + 1) * batch_count)
@@ -304,11 +308,9 @@ class ConvolutionalModule(torch.nn.Module):
         return x
 
 
-def main_mean_neural(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
+def main_mean_neural(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: int, batch_size: int):
     learning_rate = 1e-3
     include_var = False
-    batch_size = 50
-    epochs = 100
 
     print("Constructing tensors")
     x_train, y_train = construct_mean_tensors(emb, tweets_train, include_var, zero_row=False)
@@ -335,9 +337,8 @@ def main_mean_neural(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     )
 
 
-def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
+def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: int, batch_size: int):
     learning_rate = 1e-3
-    epochs = 20
     min_length = 1
     crop_length = 40
 
@@ -357,17 +358,15 @@ def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
     return train(
         model, ws,
         x_train, y_train, lens_train, x_test, y_test, lens_test,
-        loss_func=cost_func, optimizer=optimizer, epochs=epochs, batch_size=10,
+        loss_func=cost_func, optimizer=optimizer, epochs=epochs, batch_size=batch_size,
     )
 
 
-def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets):
+def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: int, batch_size: int):
     learning_rate = 1e-3
     min_length = 5
     crop_length = 40
-    epochs = 10
     n_features = emb.size
-    batch_size = 200
     n_filters = [40, 40, 40, 40]
     activation_func = torch.nn.functional.relu
 
@@ -404,12 +403,26 @@ class SelectedModel(Enum):
     NEURAL_MEAN = auto()
 
 
+def dispatch_model(selected_model: SelectedModel, emb: Embedding, tweets_train: Tweets, tweets_test: Tweets,
+                   epochs: int, batch_size: int):
+    if selected_model == SelectedModel.CNN:
+        return main_cnn(emb, tweets_train, tweets_test, epochs, batch_size)
+    elif selected_model == SelectedModel.RNN:
+        return main_rnn(emb, tweets_train, tweets_test, epochs, batch_size)
+    elif selected_model == SelectedModel.MEAN_NEURAL:
+        return main_mean_neural(emb, tweets_train, tweets_test, epochs, batch_size)
+    elif selected_model == SelectedModel.NEURAL_MEAN:
+        assert False, "Guilherme is implementing this"
+    else:
+        assert False, f"Unexpected model {selected_model}"
+
+
 def main():
     train_count = 500_000
     test_count = 10_000
     selected_model = SelectedModel.CNN
-
-    set_seeds(None)
+    epochs = 10
+    batch_size = 1000
 
     print("Loading embedding")
     emb = load_embedding(10_000, 0, 200)
@@ -417,17 +430,10 @@ def main():
     print("Loading tweets")
     tweets_train, tweets_test = load_tweets_split(train_count, test_count)
 
-    if selected_model == SelectedModel.CNN:
-        losses, train_accs, test_accs = main_cnn(emb, tweets_train, tweets_test)
-    elif selected_model == SelectedModel.RNN:
-        losses, train_accs, test_accs = main_rnn(emb, tweets_train, tweets_test)
-    elif selected_model == SelectedModel.MEAN_NEURAL:
-        losses, train_accs, test_accs = main_mean_neural(emb, tweets_train, tweets_test)
-    elif selected_model == SelectedModel.NEURAL_MEAN:
-        assert False, "Guilherme is implementing this"
-    else:
-        assert False, f"Unexpected model {selected_model}"
+    print("Training model")
+    losses, train_accs, test_accs = dispatch_model(selected_model, emb, tweets_train, tweets_test, epochs, batch_size)
 
+    print("Generating final plot")
     pyplot.plot(losses, label="loss")
     pyplot.plot(train_accs, label="train acc")
     pyplot.plot(test_accs, label="test acc")
