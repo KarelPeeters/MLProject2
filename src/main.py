@@ -176,37 +176,58 @@ def parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs, batch_s
                        x_train, y_train, lens_train, x_test, y_test, lens_test):
     # TODO: Find best dropout_rate and best batch_size!
     filters = np.arange(start=5, stop=35, step=10, dtype=int)
+    hidden_sizes = np.array([10, 20, 50, 100])
+
+    np.save("../figures/cnn_sweep/filters.npy", filters)
+    np.save("../figures/cnn_sweep/hidden_sizes.npy", hidden_sizes)
+    np.save("../figures/cnn_sweep/funcs.npy", ["sigmoid", "relu"])
+
     opt_filters = np.zeros(4)
     opt_activation_func = ""
     max_test_acc = float('-inf')
 
-    for activation_func in [torch.nn.functional.softmax, torch.nn.functional.relu]:
-        for n_filters_2 in filters:
-            for n_filters_3 in filters:
-                for n_filters_4 in filters:
-                    for n_filters_5 in filters:
-                        model = ConvolutionalModule(n_features=n_features,
-                                                    n_filters=[n_filters_2, n_filters_3, n_filters_4, n_filters_5],
-                                                    activation_func=activation_func, dropout_rate=0.5)
-                        model.to(DEVICE)
-                        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-                        print(f"Training with: \nn_filters_2 = {n_filters_2}, n_filters_3 = {n_filters_3}," +
-                              f"n_filters_4 = {n_filters_4}, n_filters_5 = {n_filters_5}" +
-                              f"\nactivation_func = {activation_func}")
-                        losses, train_accs, test_accs = train(
-                            model, ws,
-                            x_train, y_train, lens_train,
-                            x_test, y_test, lens_test,
-                            loss_func, optimizer, epochs, batch_size,
-                            print_update=False
-                        )
-                        max_test_acc_temp = test_accs.max()
-                        print(f"Maximum test accuracy = {max_test_acc_temp}")
-                        if max_test_acc_temp > max_test_acc:
-                            print("New optimum parameters!")
-                            max_test_acc = max_test_acc_temp
-                            opt_filters = np.array([n_filters_2, n_filters_3, n_filters_4, n_filters_5])
-                            opt_activation_func = activation_func
+    timer = TimeEstimator(2 * len(filters) * len(hidden_sizes))
+    time_i = 0
+
+    result_train_acc = np.zeros((2, len(filters), len(hidden_sizes)))
+    result_test_acc = np.zeros((2, len(filters), len(hidden_sizes)))
+
+    for i0, activation_func in enumerate([torch.sigmoid, torch.nn.functional.relu]):
+        for i1, n_filters in enumerate(filters):
+            for i2, hidden_size in enumerate(hidden_sizes):
+                print("eta",timer.update(time_i))
+                time_i += 1
+
+                model = ConvolutionalModule(n_features=n_features,
+                                            n_filters=[n_filters, n_filters, n_filters, n_filters],
+                                            activation_func=activation_func, dropout_rate=0.5, hidden_size=hidden_size)
+                model.to(DEVICE)
+                optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+                print(f"Training with: \nn_filters = {n_filters}, n_filters = {n_filters}," +
+                      f"n_filters = {n_filters}, n_filters = {n_filters}" +
+                      f"\nactivation_func = {activation_func}")
+                losses, train_accs, test_accs = train(
+                    model, ws,
+                    x_train, y_train, lens_train,
+                    x_test, y_test, lens_test,
+                    loss_func, optimizer, epochs, batch_size,
+                    print_update=False
+                )
+
+                max_test_acc_temp = test_accs.max()
+
+                result_train_acc[i0, i1, i2] = train_accs.max()
+                result_test_acc[i0, i1, i2] = max_test_acc_temp
+
+                print(f"Maximum test accuracy = {max_test_acc_temp}")
+                if max_test_acc_temp > max_test_acc:
+                    print("New optimum parameters!")
+                    max_test_acc = max_test_acc_temp
+                    opt_filters = np.array([n_filters, n_filters, n_filters, n_filters])
+                    opt_activation_func = activation_func
+
+    np.save("../figures/cnn_sweep/train_acc.npy", result_train_acc)
+    np.save("../figures/cnn_sweep/test_acc.npy", result_test_acc)
 
     return opt_filters, opt_activation_func
 
@@ -247,7 +268,8 @@ class ConvolutionalModule(torch.nn.Module):
     def __init__(
             self,
             n_features, n_convols=3, n_filters=None, n_filters_const=10,
-            activation_func=torch.nn.functional.relu, dropout_rate=0.5
+            activation_func=torch.nn.functional.relu, dropout_rate=0.5,
+            hidden_size: int = 100,
     ):
         super().__init__()
 
@@ -264,9 +286,8 @@ class ConvolutionalModule(torch.nn.Module):
         for i in range(self.n_convols):
             self.convs.append(torch.nn.Conv1d(n_features, self.n_filters[i], kernel_size=i + 2, padding=(i + 2) // 2))
 
-        temp_size = 50
-        self.linear1 = torch.nn.Linear(np.sum(self.n_filters), temp_size)
-        self.linear2 = torch.nn.Linear(temp_size, 2)
+        self.linear1 = torch.nn.Linear(np.sum(self.n_filters), hidden_size)
+        self.linear2 = torch.nn.Linear(hidden_size, 2)
 
     def forward(self, x, lens, ws, training=True):
         x = ws[x, :].permute(0, 2, 1)
@@ -378,12 +399,14 @@ def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: 
                                                              zero_row=True)
 
     loss_func = torch.nn.CrossEntropyLoss()
-    """
-    n_filters, activation_func = parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs, batch_size, 
-                                                    x_train, y_train, lens_train, x_test, y_test, lens_test)
-    """
+    n_filters, hidden_size, activation_func = parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs,
+                                                                 batch_size,
+                                                                 x_train, y_train, lens_train, x_test, y_test,
+                                                                 lens_test)
+
     print("Building model")
-    model = ConvolutionalModule(n_features=n_features, n_filters=n_filters, activation_func=activation_func)
+    model = ConvolutionalModule(n_features=n_features, n_filters=n_filters, activation_func=activation_func,
+                                hidden_size=hidden_size)
     model.to(DEVICE)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -418,7 +441,7 @@ def dispatch_model(selected_model: SelectedModel, emb: Embedding, tweets_train: 
 
 
 def main():
-    train_count = 500_000
+    train_count = 100_000
     test_count = 10_000
     selected_model = SelectedModel.CNN
     epochs = 10
