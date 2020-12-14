@@ -40,6 +40,9 @@ class Tweets:
     def take(self, count: int):
         return self.split([count])[0]
 
+    def total_length(self):
+        return len(self.pos) + len(self.neg)
+
 
 def tweet_as_tokens(tweet: str, word_dict: dict) -> List[int]:
     """Convert a tweet into a list of word indices"""

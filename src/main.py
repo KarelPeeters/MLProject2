@@ -104,15 +104,15 @@ def train(
 
     return losses, train_accs, test_accs
 
-def train1(model, x_train, y_train, z_train, loss_func, optimizer, epochs: int, batch_size: int, device: str):
-    losses = np.zeros(epochs // 10)
-    train_accs = np.zeros(epochs // 10)
-    test_accs = np.zeros(epochs // 10)
+
+def train_neural_mean(model, ws, x_train, y_train, z_train, loss_func, optimizer, epochs: int, batch_size: int):
+    losses = np.zeros(epochs)
+    train_accs = np.zeros(epochs)
 
     for epoch in range(epochs):
         model.train()
 
-        shuffle = torch.randperm(len(x_train), device=device)
+        shuffle = torch.randperm(len(x_train), device=DEVICE)
         batch_count = len(x_train) // batch_size
 
         epoch_loss = 0
@@ -121,79 +121,56 @@ def train1(model, x_train, y_train, z_train, loss_func, optimizer, epochs: int, 
         for b in range(batch_count):
             batch_i = shuffle[b * batch_size: (b + 1) * batch_size]
             x_train_batch = x_train[batch_i]
-            y_train_batch = y_train[batch_i][:,0]
+            y_train_batch = y_train[batch_i][:, 0]
             z_train_batch = z_train[batch_i]
-            #print(x_train_batch.size())
-            #print(y_train_batch)
-            predictions = model.forward(x_train_batch)
-
-            #print(predictions)
-            #print(predictions)
-            #print(predictions.size())
+            predictions = model.forward(ws[x_train_batch])
 
             loss = loss_func(predictions, y_train_batch)
-            #loss = torch.sum(loss)
-            loss = torch.sum(torch.mul(loss,z_train_batch))
-           # print(loss)
-
+            loss = torch.sum(torch.mul(loss, z_train_batch))
 
             epoch_loss += loss.item() / batch_count
             epoch_acc += accuracy(predictions, y_train_batch) / batch_count
 
             optimizer.zero_grad()
-            loss.backward( )
+            loss.backward()
             optimizer.step()
 
-        #y_test_pred = model.forward(x_test)
-        #test_acc = accuracy(y_test_pred, y_test)
         print(f'Epoch {epoch}/{epochs}, loss {epoch_loss:.4f} acc {epoch_acc:.4f}')
 
-        losses[epoch // 10] = epoch_loss
-        train_accs[epoch // 10] = epoch_acc
-
+        losses[epoch] = epoch_loss
+        train_accs[epoch] = epoch_acc
 
     return losses, train_accs
 
-def test(emb:Embedding, tweets : Tweets, tweet_count :int, epochs: int, batch_size: int, learning_rate: int, device: str, model, loss_func, optimizer):
 
-    losses = np.zeros(epochs // 10)
-    test_accs = 0
-    epoch_acc = 0
+def calc_acc_neural_mean(emb: Embedding, tweets: Tweets, model):
+    acc_sum = 0
+    tweet_count = 0
 
-    L = 2*tweet_count
+    ws = torch.tensor(emb.ws, device=DEVICE)
 
-    print('L')
-    print(L)
-
-
+    model.eval()
 
     for pos, curr_tweets in [(1, tweets.pos), (0, tweets.neg)]:
-        for tweet in curr_tweets[:tweet_count]:
+        for tweet in curr_tweets:
 
             tokens = tweet_as_tokens(tweet, emb.word_dict)
             dimtokens = len(tokens)
             if dimtokens == 0 or dimtokens == 1:
                 continue
 
+            z = torch.ones(dimtokens, 1) / dimtokens
 
-            z =torch.ones(dimtokens,1)/dimtokens
+            x = ws[tokens]
+            # x= torch.cat((x,torch.reshape(z,(-1,1))),dim=1)
 
-            #x= torch.cat((torch.tensor(emb.ws[tokens,:]),torch.reshape(z,(-1,1))),dim=1)
-            x = torch.tensor(emb.ws[tokens,:])
-            #print(z)
-            #print(z.size())
-            #vector with length 201 ( 200 from the glove and 1 having 1/len(tweet)
+            predictions = torch.mean(model.forward(x), 0, keepdim=True)
 
+            acc_sum += accuracy(predictions, pos)
+            tweet_count += 1
 
+    return acc_sum / tweet_count
 
-
-            predictions = torch.mean(model.forward(x), 0, keepdim = True)
-
-            test_accs+= accuracy(predictions, pos)/L
-            #print(accuracy(predictions, pos)/L)
-
-    print(test_accs)
-    return test_accs
 
 def construct_mean_tensors(emb: Embedding, tweets: Tweets, include_var: bool, zero_row: bool):
     total_tweet_count = len(tweets.pos) + len(tweets.neg)
@@ -224,36 +201,30 @@ def construct_mean_tensors(emb: Embedding, tweets: Tweets, include_var: bool, ze
     return x[:next_i].to(DEVICE), y[:next_i].to(DEVICE)
 
 
-def construct_ws_nn(emb: Embedding, tweets: Tweets, tweet_count: int, epochs: int, batch_size: int, learning_rate: int,
-                    device: str):
-    assert tweet_count <= len(tweets.pos) and tweet_count <= len(tweets.neg), "Too many tweets"
-
-    # x = torch.tensor(emb.ws)
-    # y = torch.empty(tweet_count, dtype=torch.long)
-
+def construct_ws_nn(emb: Embedding, tweets: Tweets):
     dim = 0
     for pos, curr_tweets in [(1, tweets.pos), (0, tweets.neg)]:
-        for tweet in curr_tweets[:tweet_count]:
+        for tweet in curr_tweets:
             tokens = tweet_as_tokens(tweet, emb.word_dict)
-            if len(tokens) == 0 or len(tokens) == 1:
+            if len(tokens) == 0:
                 continue
             dim += len(tokens)
 
-    x = torch.empty(dim, emb.size)
+    x = torch.empty(dim, dtype=torch.long)
     y = torch.empty(dim, dtype=torch.long)
     z = torch.empty(dim, 1)
 
     next_i = 0
     for pos, curr_tweets in [(1, tweets.pos), (0, tweets.neg)]:
-        for tweet in curr_tweets[:tweet_count]:
+        for tweet in curr_tweets:
             tokens = tweet_as_tokens(tweet, emb.word_dict)
             dimtoken = len(tokens)
 
-            if len(tokens) == 0 or len(tokens) == 1:
+            if len(tokens) == 0:
                 continue
 
             z[next_i:next_i + dimtoken, :] = 1 / dimtoken
-            x[next_i:next_i + dimtoken, :emb.size] = torch.tensor(emb.ws[tokens, :])
+            x[next_i:next_i + dimtoken] = torch.tensor(tokens)
             # x[next_i:next_i+dimtoken,-1] = 1/dimtoken
             y[next_i:next_i + dimtoken] = pos
 
@@ -273,11 +244,8 @@ def construct_ws_nn(emb: Embedding, tweets: Tweets, tweet_count: int, epochs: in
     # y = y[:next_i]
 
     y = torch.reshape(y, (-1, 1))
-    print(x.size())
-    print(y.size())
-    print(z.size())
 
-    return x, y, z
+    return x.to(DEVICE), y.to(DEVICE), z.to(DEVICE)
 
 
 def construct_sequential_tensors(emb: Embedding, tweets: Tweets, min_length: int, crop_length: int, zero_row: bool):
@@ -341,7 +309,7 @@ def parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs, batch_s
     for i0, activation_func in enumerate([torch.sigmoid, torch.nn.functional.relu]):
         for i1, n_filters in enumerate(filters):
             for i2, hidden_size in enumerate(hidden_sizes):
-                print("eta",timer.update(time_i))
+                print("eta", timer.update(time_i))
                 time_i += 1
 
                 model = ConvolutionalModule(n_features=n_features,
@@ -505,68 +473,32 @@ def main_mean_neural(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, 
 
 
 def main_neural_mean(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: int, batch_size: int):
-    emb = load_embedding("size_200")
-    tweets = load_tweets()
-
-    epochs = 60
     learning_rate = 1e-3
-    train_ratio = .95
-    batch_size = 400
-    n_channels = 40
-    n_features = emb.size
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device {device}")
+    ws = torch.tensor(emb.ws, device=DEVICE)
 
-    print("Constructing tensors")
-    tweet_count = 200_000
-
-    tweets_train, tweets_test = Tweets.split(tweets, train_ratio)
-    x_train, y_train, z_train = construct_ws_nn(emb, tweets_train, tweet_count, epochs, batch_size, learning_rate,
-                                                device)
-    # x, y = construct_mean_tensors(emb, tweets, tweet_count=200_000)
-    # x, y = construct_sequential_tensors(emb=emb, tweets=tweets, tweet_count=10000, max_length=n_channels)
-
-    # x = x.permute(0, 2, 1)
-    x_train = x_train.to(device)
-    y_train = y_train.to(device)
-    z_train = z_train.to(device)
-
+    x_train, y_train, z_train = construct_ws_nn(emb, tweets_train)
     print("Split the data")
-    # x_train, y_train, z_train, x_test, y_test, z_test = split_data(x, y, z, train_ratio)
-    # print(x_train.size())
-    # print(y_train.size())
-    # print(x_test.size())
-    # print(y_test.size())
-    loss_func = torch.nn.CrossEntropyLoss(reduction='none')
 
-    # model = convolutional_nn(n_features=n_features, n_filters=10)
+    # TODO try a bigger network
     model = torch.nn.Sequential(
-        torch.nn.Linear(x_train.shape[1], 50),
+        torch.nn.Linear(emb.size, 50),
         torch.nn.ReLU(),
         torch.nn.Dropout(),
         torch.nn.Linear(50, 2),
     )
-    # model = torch.nn.Sequential(
-    #   torch.nn.Linear(2, 50),
-    #    torch.nn.ReLU(),
-    #    torch.nn.Dropout(),
-    #    torch.nn.Linear(50, 2),
-    # )
-    model.to(device)
+    model.to(DEVICE)
 
+    loss_func = torch.nn.CrossEntropyLoss(reduction='none')
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     print("Training...")
-    losses, train_accs = train1(model, x_train, y_train, z_train,
-                                loss_func, optimizer, epochs, batch_size, device)
+    losses, train_accs = train_neural_mean(model, ws, x_train, y_train, z_train, loss_func, optimizer, epochs, batch_size)
 
-    epoch_acc = test(emb, tweets_train, tweet_count, epochs, batch_size, learning_rate, device, model, loss_func,
-                     optimizer)
+    train_acc = calc_acc_neural_mean(emb, tweets_train.take(tweets_test.total_length()), model)
+    test_acc = calc_acc_neural_mean(emb, tweets_test, model)
 
-    pyplot.plot(losses, label="loss")
-    pyplot.plot(train_accs, label="train acc")
-    pyplot.plot(test_accs, label="test acc")
-    pyplot.legend()
-    pyplot.show()
+    print("Train acc:", train_acc)
+    print("Test acc:", test_acc)
+
 
 def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: int, batch_size: int):
     learning_rate = 1e-3
@@ -645,16 +577,16 @@ def dispatch_model(selected_model: SelectedModel, emb: Embedding, tweets_train: 
     elif selected_model == SelectedModel.MEAN_NEURAL:
         return main_mean_neural(emb, tweets_train, tweets_test, epochs, batch_size)
     elif selected_model == SelectedModel.NEURAL_MEAN:
-        assert False, "Guilherme is implementing this"
+        return main_neural_mean(emb, tweets_train, tweets_test, epochs, batch_size)
     else:
         assert False, f"Unexpected model {selected_model}"
 
 
 def main():
-    train_count = 100_000
+    train_count = 500_000
     test_count = 10_000
-    selected_model = SelectedModel.CNN
-    epochs = 10
+    selected_model = SelectedModel.NEURAL_MEAN
+    epochs = 5
     batch_size = 1000
 
     print("Loading embedding")
@@ -664,16 +596,19 @@ def main():
     tweets_train, tweets_test = load_tweets_split(train_count, test_count)
 
     print("Training model")
-    losses, train_accs, test_accs = dispatch_model(selected_model, emb, tweets_train, tweets_test, epochs, batch_size)
+    result = dispatch_model(selected_model, emb, tweets_train, tweets_test, epochs, batch_size)
 
-    print("Generating final plot")
-    pyplot.plot(losses, label="loss")
-    pyplot.plot(train_accs, label="train acc")
-    pyplot.plot(test_accs, label="test acc")
-    pyplot.ylabel("epoch")
-    pyplot.xlabel("performance")
-    pyplot.legend()
-    pyplot.show()
+    if result is not None:
+        losses, train_accs, test_accs = result
+
+        print("Generating final plot")
+        pyplot.plot(losses, label="loss")
+        pyplot.plot(train_accs, label="train acc")
+        pyplot.plot(test_accs, label="test acc")
+        pyplot.ylabel("epoch")
+        pyplot.xlabel("performance")
+        pyplot.legend()
+        pyplot.show()
 
 
 if __name__ == '__main__':
