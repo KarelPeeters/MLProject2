@@ -31,7 +31,7 @@ def train(model, x_train, y_train, x_test, y_test, loss_func, optimizer, epochs:
             epoch_acc += accuracy(predictions, y_train_batch) / batch_count
 
             optimizer.zero_grad()
-            loss.backward(retain_graph=True  )
+            loss.backward()
             optimizer.step()
 
         y_test_pred = model.forward(x_test)
@@ -72,6 +72,7 @@ def train1(model, x_train, y_train, z_train, loss_func, optimizer, epochs: int, 
             #print(predictions.size())
             
             loss = loss_func(predictions, y_train_batch)
+            #loss = torch.sum(loss)
             loss = torch.sum(torch.mul(loss,z_train_batch))
            # print(loss)
             
@@ -157,21 +158,22 @@ def test(emb:Embedding, tweets : Tweets, tweet_count :int, epochs: int, batch_si
     
     print('L')
     print(L)
-        
+    
+
+    
     for pos, curr_tweets in [(1, tweets.pos), (0, tweets.neg)]:
         for tweet in curr_tweets[:tweet_count]:
             
             tokens = tweet_as_tokens(tweet, emb.word_dict)
-               
-            if len(tokens) == 0 or len(tokens) == 1:
+            dimtokens = len(tokens)   
+            if dimtokens == 0 or dimtokens == 1:
                 continue
             
             
+            z =torch.ones(dimtokens,1)/dimtokens
             
-            z =torch.ones(len(tokens),1)/len(tokens)
-            
-            x= torch.cat((torch.tensor(emb.ws[tokens,:]),torch.reshape(z,(-1,1))),dim=1)
-            
+            #x= torch.cat((torch.tensor(emb.ws[tokens,:]),torch.reshape(z,(-1,1))),dim=1)
+            x = torch.tensor(emb.ws[tokens,:])
             #print(z)
             #print(z.size())
             #vector with length 201 ( 200 from the glove and 1 having 1/len(tweet)
@@ -349,7 +351,7 @@ def construct_ws_nn(emb:Embedding, tweets : Tweets, tweet_count :int, epochs: in
             dim += len(tokens)
     
     
-    x = torch.empty(dim, emb.size+1)
+    x = torch.empty(dim, emb.size)
     y = torch.empty(dim, dtype=torch.long)
     z = torch.empty(dim, 1)
     
@@ -364,7 +366,7 @@ def construct_ws_nn(emb:Embedding, tweets : Tweets, tweet_count :int, epochs: in
                 
             z[next_i:next_i+dimtoken,:] = 1/dimtoken
             x[next_i:next_i+dimtoken,:emb.size] = torch.tensor(emb.ws[tokens,:])
-            x[next_i:next_i+dimtoken,-1] = 1/dimtoken
+            #x[next_i:next_i+dimtoken,-1] = 1/dimtoken
             y[next_i:next_i+dimtoken] = pos
             
             next_i += dimtoken
@@ -388,8 +390,6 @@ def construct_ws_nn(emb:Embedding, tweets : Tweets, tweet_count :int, epochs: in
     print(y.size())
     print(z.size())
     
-    x = x.to(device)
-    y = y.to(device)
     
     return x, y , z
 
@@ -477,17 +477,17 @@ def main():
     emb = load_embedding("size_200")
     tweets = load_tweets()
 
-    epochs = 50
-    learning_rate = 1e-2
+    epochs = 60
+    learning_rate = 1e-3
     train_ratio = .95
-    batch_size = 5
+    batch_size = 400
     n_channels = 40
     n_features = emb.size
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device {device}")
 
     print("Constructing tensors")
-    tweet_count = 100
+    tweet_count = 200_000
     
     tweets_train , tweets_test = Tweets.split(tweets,train_ratio)
     x_train, y_train, z_train = construct_ws_nn(emb, tweets_train, tweet_count , epochs , batch_size, learning_rate, device)
@@ -508,26 +508,26 @@ def main():
     loss_func = torch.nn.CrossEntropyLoss(reduction = 'none')
 
     #model = convolutional_nn(n_features=n_features, n_filters=10)
-    #model = torch.nn.Sequential(
-    #    torch.nn.Linear(x_train.shape[1], 50),
-    #    torch.nn.ReLU(),
-    #    torch.nn.Dropout(),
-    #    torch.nn.Linear(50, 2),
-    #)
     model = torch.nn.Sequential(
-        torch.nn.Linear(2, 50),
+        torch.nn.Linear(x_train.shape[1], 50),
         torch.nn.ReLU(),
         torch.nn.Dropout(),
         torch.nn.Linear(50, 2),
     )
+    #model = torch.nn.Sequential(
+    #   torch.nn.Linear(2, 50),
+    #    torch.nn.ReLU(),
+    #    torch.nn.Dropout(),
+    #    torch.nn.Linear(50, 2),
+    #)
     model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     print("Training...")
-    losses, train_accs = train2(model, x_train, y_train, z_train,
+    losses, train_accs = train1(model, x_train, y_train, z_train,
                                           loss_func, optimizer, epochs, batch_size, device)
                                           
-    epoch_acc = test1(emb, tweets_train, tweet_count , epochs , batch_size , learning_rate , device , model, loss_func, optimizer)                                        
+    epoch_acc = test(emb, tweets_train, tweet_count , epochs , batch_size , learning_rate , device , model, loss_func, optimizer)                                        
 
     pyplot.plot(losses, label="loss")
     pyplot.plot(train_accs, label="train acc")
