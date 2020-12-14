@@ -51,17 +51,6 @@ def tweet_as_tokens(tweet: str, word_dict: dict) -> List[int]:
     return tokens
 
 
-def split_tweets(x, y, lens, ratio):
-    """
-    Split the dataset based according to ratio. 
-    """
-    perm = np.random.permutation(np.arange(len(x)))
-    x, y, lens = x[perm], y[perm], lens[perm]
-
-    split = int(len(x) * ratio)
-    return x[:split], y[:split], lens[:split], x[split:], y[split:], lens[split:]
-
-
 def accuracy(y_pred, y) -> float:
     y_pred = torch.argmax(y_pred, dim=1)
     return torch.eq(y_pred, y).float().mean()
