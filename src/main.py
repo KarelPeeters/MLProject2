@@ -491,7 +491,8 @@ def main_neural_mean(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, 
     loss_func = torch.nn.CrossEntropyLoss(reduction='none')
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     print("Training...")
-    losses, train_accs = train_neural_mean(model, ws, x_train, y_train, z_train, loss_func, optimizer, epochs, batch_size)
+    losses, train_accs = train_neural_mean(model, ws, x_train, y_train, z_train, loss_func, optimizer, epochs,
+                                           batch_size)
 
     train_acc = calc_acc_neural_mean(emb, tweets_train.take(tweets_test.total_length()), model)
     test_acc = calc_acc_neural_mean(emb, tweets_test, model)
@@ -518,11 +519,14 @@ def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: 
     cost_func = torch.nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    return train(
+    result = train(
         model, ws,
         x_train, y_train, lens_train, x_test, y_test, lens_test,
         loss_func=cost_func, optimizer=optimizer, epochs=epochs, batch_size=batch_size,
+        save_model_path="../data/output/rnn_model.pt"
     )
+
+    return result
 
 
 def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: int, batch_size: int):
@@ -585,7 +589,7 @@ def dispatch_model(selected_model: SelectedModel, emb: Embedding, tweets_train: 
 def main():
     train_count = 500_000
     test_count = 10_000
-    selected_model = SelectedModel.NEURAL_MEAN
+    selected_model = SelectedModel.RNN
     epochs = 5
     batch_size = 1000
 
@@ -611,6 +615,66 @@ def main():
         pyplot.show()
 
 
+def save_submission(model, emb: Embedding):
+    model.eval()
+    crop_length = 40
+
+    print("Copying ws")
+    ws = torch.tensor(emb.ws, device=DEVICE)
+
+    print("Calculating test accuracy")
+
+    [_, test_tweets] = load_tweets_split(0, 10_000)
+    x_test, y_test, lens_test = construct_sequential_tensors(emb, test_tweets, 1, crop_length, zero_row=False)
+    print("Expected accuracy:", calc_test_accuracy(model, ws, x_test, y_test, lens_test, 1000))
+
+    print("Loading submission tweets")
+    with open("../data/test_data.txt") as f:
+        submission_tweets = []
+        for line in f.readlines():
+            tweet = line[line.find(",") + 1:].strip()
+            submission_tweets.append(tweet)
+
+    tweet_count = len(submission_tweets)
+
+    # these tweets are not really positive but we ignore y anyway
+    tweets = Tweets(pos=submission_tweets, neg=[])
+
+    print("Constructing tensors")
+    x_all, _, lens_all = construct_sequential_tensors(emb, tweets, 0, crop_length, zero_row=False)
+
+    # ignore the empty tweets
+    non_empty_indices, = lens_all.nonzero(as_tuple=True)
+    x = x_all[non_empty_indices]
+    lens = lens_all[non_empty_indices]
+
+    print("Running through model")
+    y_pred = model.forward(x, lens, ws)
+    y_pred_int = y_pred.argmax(dim=1)
+
+    y_pred_int_all = torch.zeros(tweet_count, dtype=torch.long, device=DEVICE)
+    y_pred_int_all[non_empty_indices] = y_pred_int
+
+    print("Saving output")
+    with open("../data/output/submission.csv", "w") as f:
+        f.write("Id,Prediction\n")
+        for i in range(tweet_count):
+            f.write(f"{i + 1},{y_pred_int_all[i].item() * 2 - 1}\n")
+
+
+def submission_main():
+    print("Loading embedding")
+    emb = load_embedding(10_000, 0, 200)
+
+    print("Loading model")
+    model = torch.load("../data/output/rnn_model.pt")
+    model.to(DEVICE)
+
+    save_submission(model, emb)
+
+
 if __name__ == '__main__':
     set_seeds()
-    main()
+
+    # main
+    submission_main()
