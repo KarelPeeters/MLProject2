@@ -355,13 +355,14 @@ class RecurrentModel(torch.nn.Module):
         self.lstm = torch.nn.LSTM(
             input_size=emb_size,
             hidden_size=HIDDEN_SIZE, num_layers=3,
+            dropout=.1,
         )
 
         self.seq = torch.nn.Sequential(
-            torch.nn.Dropout(),
-            torch.nn.Linear(HIDDEN_SIZE, 50),
+            torch.nn.Linear(HIDDEN_SIZE, 200),
             torch.nn.ReLU(),
-            torch.nn.Dropout(),
+            torch.nn.Linear(200, 50),
+            torch.nn.ReLU(),
             torch.nn.Linear(50, 2),
         )
 
@@ -587,7 +588,7 @@ def dispatch_model(selected_model: SelectedModel, emb: Embedding, tweets_train: 
 
 
 def main():
-    train_count = 500_000
+    train_count = 1_000_000
     test_count = 10_000
     selected_model = SelectedModel.RNN
     epochs = 5
@@ -676,5 +677,5 @@ def submission_main():
 if __name__ == '__main__':
     set_seeds()
 
-    # main
+    main()
     submission_main()
