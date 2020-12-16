@@ -675,8 +675,57 @@ def submission_main():
     save_submission(model, emb)
 
 
+def manual_experimenting_main():
+    print("Loading embedding")
+    emb = load_embedding(10_000, 0, True, 200)
+    ws = torch.tensor(emb.ws, device=DEVICE)
+
+    print("Loading model")
+    model = torch.load("../data/output/rnn_model.pt")
+    model.eval()
+    model.to(DEVICE)
+
+    print("Applying to tweets")
+    tweets = [
+        "i am happy",
+        "i am not happy",
+        "i am sad",
+        "i am not sad",
+        "go fuck yourself",
+        "machine learning is good",
+        "machine learning is bad",
+        "machine learning is not good",
+        "machine learning is not bad",
+        "machine learning is neither good nor bad",
+        "violence is good",
+        "murder is good",
+        "machine learning",
+        "i'm going to the pool",
+        "bad is good",
+        "bad good",
+        "machine studying",
+        "<user>",
+        "good",
+        "not good",
+        "i like studying",
+        "i really like studying",
+        "happy sad",
+        "happy happy sad",
+        "happy happy happy sad sad",
+    ]
+    wrapped_tweets = Tweets(pos=tweets, neg=[])
+
+    x, _, lens = construct_sequential_tensors(emb, wrapped_tweets, 1, 40, zero_row=False)
+    y_pred = model.forward(x, lens, ws)
+
+    for i in range(len(tweets)):
+        happyness = torch.softmax(y_pred[i], dim=0)[1].detach().cpu().numpy()
+        print(f"{happyness:.2f}, {tweets[i]}")
+
+
 if __name__ == '__main__':
     set_seeds()
 
-    main()
+    # main()
     # submission_main()
+    # manual_experimenting_main()

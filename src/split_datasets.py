@@ -20,7 +20,7 @@ def load_y(y: str) -> [str]:
     return tweets
 
 
-def create_split_files(force: bool):
+def create_split_files(force: bool, write_files: bool):
     if os.path.exists(BASE) and not force:
         print("Skip creating split files")
         return
@@ -42,24 +42,25 @@ def create_split_files(force: bool):
     print(f"    test  {test_count}: {test_count / total_count:.4f}")
     print(f"leaving {left_count}: {left_count / total_count:.4f} to have nice numbers")
 
-    print("Saving output files")
-    # save all split files
-    for (y, y_tweets) in [("pos", pos), ("neg", neg)]:
-        tweets_train = y_tweets[:train_count]
-        tweets_test = y_tweets[train_count:]
+    if write_files:
+        print("Saving output files")
+        # save all split files
+        for (y, y_tweets) in [("pos", pos), ("neg", neg)]:
+            tweets_train = y_tweets[:train_count]
+            tweets_test = y_tweets[train_count:]
 
-        for part, part_tweets in [("train", tweets_train), ("test", tweets_test)]:
-            with open(f"{BASE}/{part}_{y}.txt", "w", encoding="utf-8") as f:
-                f.writelines(part_tweets)
+            for part, part_tweets in [("train", tweets_train), ("test", tweets_test)]:
+                with open(f"{BASE}/{part}_{y}.txt", "w", encoding="utf-8") as f:
+                    f.writelines(part_tweets)
 
-    # save common train file for embedding
-    with open(ALL_TRAIN_TWEETS_PATH, "w", encoding="utf-8") as f:
-        f.writelines(pos[:train_count])
-        f.writelines(neg[:train_count])
+        # save common train file for embedding
+        with open(ALL_TRAIN_TWEETS_PATH, "w", encoding="utf-8") as f:
+            f.writelines(pos[:train_count])
+            f.writelines(neg[:train_count])
 
 
 def load_tweets_split(train_count: Optional[int], test_count: Optional[int]) -> (Tweets, Tweets):
-    create_split_files(force=False)
+    create_split_files(force=False, write_files=True)
 
     result = []
     for part, part_count in [("train", train_count), ("test", test_count)]:
@@ -84,4 +85,4 @@ def load_tweets_split(train_count: Optional[int], test_count: Optional[int]) -> 
 
 
 if __name__ == '__main__':
-    create_split_files(force=True)
+    create_split_files(force=True, write_files=False)
