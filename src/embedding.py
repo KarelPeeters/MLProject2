@@ -10,26 +10,29 @@ from split_datasets import ALL_TRAIN_TWEETS_PATH, create_split_files
 from util import TimeEstimator
 
 
-def get_file_paths(max_word_count: int, context_dist: Optional[int], emb_size: int):
+def get_file_paths(max_word_count: int, context_dist: Optional[int], punctuation: bool, emb_size: int):
     context_dist = context_dist or 0
 
-    word_file = f"../data/output/emb_words_{max_word_count}.txt"
-    cooc_file = f"../data/output/emb_cooc_{max_word_count}_ctx_{context_dist}.npy"
-    w_file = f"../data/output/emb_w_{max_word_count}_ctx_{context_dist}_size_{emb_size}.npy"
+    append = str(max_word_count)
+    append += "_punc" if punctuation else ""
+
+    word_file = f"../data/output/emb_words_{append}.txt"
+    cooc_file = f"../data/output/emb_cooc_{append}_ctx_{context_dist}.npy"
+    w_file = f"../data/output/emb_w_{append}_ctx_{context_dist}_size_{emb_size}.npy"
 
     return word_file, cooc_file, w_file
 
 
-def construct_cooc(max_word_count: int, context_dist: Optional[int], input_file: str):
+def construct_cooc(max_word_count: int, context_dist: Optional[int], input_file: str, punctuation: bool):
     """Call glove-rs to quickly construct the cooc matrix"""
     context_dist = context_dist or 0
 
-    word_file, cooc_file, _ = get_file_paths(max_word_count, context_dist, 0)
+    word_file, cooc_file, _ = get_file_paths(max_word_count, context_dist, punctuation, 0)
 
     cargo_args = "cargo run --release --manifest-path=../glove-rs/Cargo.toml --".split(" ")
     glove_rs_args = [
         input_file,
-        str(max_word_count), str(context_dist),
+        str(max_word_count), str(context_dist), str(punctuation).lower(),
         word_file, cooc_file
     ]
 
@@ -98,15 +101,15 @@ def train_embedding_from_cooc(
 
 def create_embedding(
         input_file,
-        max_word_count, context_dist,
+        max_word_count, context_dist, punctuation,
         emb_size: int,
         batch_size: int, epochs: int,
         n_max: int, alpha: float,
 ):
-    word_file, cooc_file, w_file = get_file_paths(max_word_count, context_dist, emb_size)
+    word_file, cooc_file, w_file = get_file_paths(max_word_count, context_dist, punctuation, emb_size)
 
     print("Constructing cooc")
-    construct_cooc(max_word_count, context_dist, input_file)
+    construct_cooc(max_word_count, context_dist, input_file, punctuation)
 
     print("Loading cooc")
     cooc = np.load(cooc_file)
@@ -148,8 +151,8 @@ class Embedding:
         return self.words[max_index]
 
 
-def load_embedding(max_word_count: int, context_dist: Optional[int], emb_size: int):
-    word_file, _, w_file = get_file_paths(max_word_count, context_dist, emb_size)
+def load_embedding(max_word_count: int, context_dist: Optional[int], punctuation: bool, emb_size: int):
+    word_file, _, w_file = get_file_paths(max_word_count, context_dist, punctuation, emb_size)
 
     with open(word_file) as f:
         words = np.array([line.strip() for line in f])
@@ -170,7 +173,7 @@ def main():
 
     create_embedding(
         input_file,
-        max_word_count, context_dist,
+        max_word_count, context_dist, True,
         emb_size,
         batch_size=2000, epochs=40,
         n_max=400, alpha=3 / 4,

@@ -22,7 +22,7 @@ struct SparseCooc {
     counts: Vec<usize>,
 }
 
-fn select_words(tweets: &str, max_word_count: usize) -> Dictionary<'_> {
+fn select_words(tweets: &str, max_word_count: usize, punctuation: bool) -> Dictionary<'_> {
     println!("Counting words");
     let mut word_counts = HashMap::new();
 
@@ -35,6 +35,8 @@ fn select_words(tweets: &str, max_word_count: usize) -> Dictionary<'_> {
         .map(|(s, c)| (*s, *c))
         .collect();
     word_count_list.sort_by_key(|&(_, c)| std::cmp::Reverse(c));
+
+    //TODO maybe remove () as well because it's kind of cheating?
 
     let index_to_word: Vec<&str> = word_count_list.iter()
         .map(|&(w, _)| w)
@@ -100,26 +102,33 @@ fn construct_cooc(tweets: &str, dict: &Dictionary, context_dist: Option<usize>) 
 }
 
 fn main() {
+    //arg handling
     let args: Vec<String> = std::env::args().collect();
     let args = &args[1..];
-    if args.len() != 5 {
-        panic!("Expected 5 arguments (input, word_count, context_dist, output_words, output_cooc)");
+    if args.len() != 6 {
+        panic!("Expected 6 arguments (input, word_count, context_dist, punctuation, output_words, output_cooc)");
     }
 
     let word_count: usize = args[1].parse().expect("word_count must be an integer");
     let context_dist: usize = args[2].parse().expect("context_dist must be an integer");
     let context_dist = if context_dist == 0 { None } else { Some(context_dist) };
+    let punctuation: bool = args[3].parse().expect("punctuation must be a bool");
 
-    let tweets = std::fs::read_to_string(&args[0]).expect("Error while reading input file");
+    let input_path = &args[0];
+    let output_words_path = &args[4];
+    let output_cooc_path = &args[5];
 
-    let dict = select_words(&tweets, word_count);
+    //start doing useful stuff
+    let tweets = std::fs::read_to_string(input_path).expect("Error while reading input file");
+
+    let dict = select_words(&tweets, word_count, punctuation);
     let cooc = construct_cooc(&tweets, &dict, context_dist);
 
     println!("Cooc size: {}", cooc.counts.len());
 
     println!("Saving outputs");
     let joined_words = dict.index_to_word.join("\n");
-    std::fs::write(&args[3], &joined_words).expect("Error while writing word list");
+    std::fs::write(output_words_path, &joined_words).expect("Error while writing word list");
 
     let mut array = Array2::default((cooc.counts.len(), 3));
     for i in 0..cooc.counts.len() {
@@ -128,5 +137,5 @@ fn main() {
         array[(i, 2)] = cooc.counts[i] as u32;
     }
 
-    write_npy(&args[4], &array).expect("Error while writing cooc file");
+    write_npy(output_cooc_path, &array).expect("Error while writing cooc file");
 }

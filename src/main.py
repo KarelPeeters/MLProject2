@@ -355,11 +355,12 @@ class RecurrentModel(torch.nn.Module):
         self.lstm = torch.nn.LSTM(
             input_size=emb_size,
             hidden_size=HIDDEN_SIZE, num_layers=3,
-            dropout=.1,
+            bidirectional=False,
         )
 
         self.seq = torch.nn.Sequential(
-            torch.nn.Linear(HIDDEN_SIZE, 200),
+            torch.nn.Dropout(),
+            torch.nn.Linear(HIDDEN_SIZE * (1 + self.lstm.bidirectional), 200),
             torch.nn.ReLU(),
             torch.nn.Linear(200, 50),
             torch.nn.ReLU(),
@@ -595,7 +596,7 @@ def main():
     batch_size = 1000
 
     print("Loading embedding")
-    emb = load_embedding(10_000, 0, 200)
+    emb = load_embedding(10_000, 0, True, 200)
 
     print("Loading tweets")
     tweets_train, tweets_test = load_tweets_split(train_count, test_count)
@@ -665,7 +666,7 @@ def save_submission(model, emb: Embedding):
 
 def submission_main():
     print("Loading embedding")
-    emb = load_embedding(10_000, 0, 200)
+    emb = load_embedding(10_000, 0, True, 200)
 
     print("Loading model")
     model = torch.load("../data/output/rnn_model.pt")
@@ -678,4 +679,4 @@ if __name__ == '__main__':
     set_seeds()
 
     main()
-    submission_main()
+    # submission_main()

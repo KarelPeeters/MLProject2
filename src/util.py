@@ -49,7 +49,7 @@ def tweet_as_tokens(tweet: str, word_dict: dict) -> List[int]:
     tokens = []
     for word in tweet.strip().split(" "):
         index = word_dict.get(word, None)
-        if index is not None:
+        if index is not None and word != "(" and word != ")":
             tokens.append(index)
     return tokens
 
