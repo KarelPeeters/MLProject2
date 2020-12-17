@@ -36,11 +36,9 @@ fn select_words(tweets: &str, max_word_count: usize, punctuation: bool) -> Dicti
         .collect();
     word_count_list.sort_by_key(|&(_, c)| std::cmp::Reverse(c));
 
-    //TODO maybe remove () as well because it's kind of cheating?
-
     let index_to_word: Vec<&str> = word_count_list.iter()
         .map(|&(w, _)| w)
-        .filter(|w| w.chars().any(char::is_alphanumeric))
+        .filter(|w| punctuation || w.chars().any(char::is_alphanumeric))
         .take(max_word_count)
         .collect();
 
