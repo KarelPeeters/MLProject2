@@ -6,6 +6,7 @@ from typing import List, Optional
 
 import numpy as np
 import torch
+from matplotlib import pyplot
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device {DEVICE}")
@@ -111,3 +112,14 @@ def add_zero_row(ws):
     zeros_row = torch.zeros(1, ws.shape[1], device=ws.device)
     ws = torch.cat((zeros_row, ws), dim=0)
     return ws
+
+
+def set_plot_font_size():
+    params = {
+        "legend.fontsize": "large",
+        "axes.labelsize": "large",
+        "axes.titlesize": "large",
+        "xtick.labelsize": "large",
+        "ytick.labelsize": "large"
+    }
+    pyplot.rcParams.update(params)

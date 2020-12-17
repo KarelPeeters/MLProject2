@@ -7,7 +7,7 @@ from matplotlib import pyplot
 from embedding import load_embedding, Embedding
 from main import SelectedModel, dispatch_model
 from split_datasets import load_tweets_split
-from util import TimeEstimator
+from util import TimeEstimator, set_plot_font_size
 
 
 def main_test_emb_size_gen_data():
@@ -25,7 +25,7 @@ def main_test_emb_size_gen_data():
     emb_sizes[::-1].sort()
 
     print("Loading embedding")
-    full_emb = load_embedding(10_000, 0, 200)
+    full_emb = load_embedding(10_000, 0, True, 200)
 
     print("Loading tweets")
     tweets_train, tweets_test = load_tweets_split(k_repeat * train_count, k_repeat * test_count)
@@ -63,6 +63,8 @@ def main_test_emb_size_plot():
     result_test_acc = np.load("../figures/emb_size/test_acc.npy")
     result_train_acc = np.load("../figures/emb_size/train_acc.npy")
 
+    set_plot_font_size()
+
     pyplot.figure()
     items = pyplot.plot(result_test_acc.T)
     pyplot.gca().set_prop_cycle(None)
@@ -74,9 +76,9 @@ def main_test_emb_size_plot():
     pyplot.show()
 
     pyplot.figure()
-    pyplot.plot(emb_sizes, result_test_acc[:, -4:].mean(axis=1), label="Test accuracy")
+    pyplot.plot(emb_sizes, result_test_acc[:, -4:].mean(axis=1), "k", label="Test accuracy")
     pyplot.gca().set_prop_cycle(None)
-    pyplot.plot(emb_sizes, result_train_acc[:, -4:].mean(axis=1), "--", label="Train accuracy")
+    pyplot.plot(emb_sizes, result_train_acc[:, -4:].mean(axis=1), "k--", label="Train accuracy")
     pyplot.legend()
     pyplot.xlabel("Embedding size")
     pyplot.ylabel("accuracy")
@@ -85,7 +87,7 @@ def main_test_emb_size_plot():
 
 
 def main():
-    main_test_emb_size_gen_data()
+    # main_test_emb_size_gen_data()
     main_test_emb_size_plot()
 
 

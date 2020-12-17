@@ -20,7 +20,7 @@ def load_y(y: str) -> [str]:
     return tweets
 
 
-def create_split_files(force: bool, write_files: bool):
+def create_split_files(force: bool, write_files: bool = True):
     if os.path.exists(BASE) and not force:
         print("Skip creating split files")
         return
@@ -60,7 +60,7 @@ def create_split_files(force: bool, write_files: bool):
 
 
 def load_tweets_split(train_count: Optional[int], test_count: Optional[int]) -> (Tweets, Tweets):
-    create_split_files(force=False, write_files=True)
+    create_split_files(force=False)
 
     result = []
     for part, part_count in [("train", train_count), ("test", test_count)]:

@@ -1,3 +1,4 @@
+import itertools
 import time
 from enum import Enum, auto
 from typing import Optional
@@ -8,7 +9,8 @@ from matplotlib import pyplot
 
 from embedding import Embedding, load_embedding
 from split_datasets import load_tweets_split
-from util import tweet_as_tokens, Tweets, accuracy, set_seeds, drop_none, DEVICE, TimeEstimator, add_zero_row
+from util import tweet_as_tokens, Tweets, accuracy, set_seeds, drop_none, DEVICE, TimeEstimator, add_zero_row, \
+    set_plot_font_size
 
 
 def calc_test_accuracy(
@@ -109,14 +111,18 @@ def train_neural_mean(model, ws, x_train, y_train, z_train, loss_func, optimizer
     losses = np.zeros(epochs)
     train_accs = np.zeros(epochs)
 
+    batch_count = len(x_train) // batch_size
+    timer = TimeEstimator(epochs * batch_count)
+
     for epoch in range(epochs):
         model.train()
 
         shuffle = torch.randperm(len(x_train), device=DEVICE)
-        batch_count = len(x_train) // batch_size
 
         epoch_loss = 0
         epoch_acc = 0
+
+        prev_print_time = time.monotonic()
 
         for b in range(batch_count):
             batch_i = shuffle[b * batch_size: (b + 1) * batch_size]
@@ -125,15 +131,23 @@ def train_neural_mean(model, ws, x_train, y_train, z_train, loss_func, optimizer
             z_train_batch = z_train[batch_i]
             predictions = model.forward(ws[x_train_batch])
 
-            loss = loss_func(predictions, y_train_batch)
-            loss = torch.sum(torch.mul(loss, z_train_batch))
+            batch_loss = loss_func(predictions, y_train_batch)
+            batch_loss = torch.sum(torch.mul(batch_loss, z_train_batch))
 
-            epoch_loss += loss.item() / batch_count
-            epoch_acc += accuracy(predictions, y_train_batch) / batch_count
+            batch_acc = accuracy(predictions, y_train_batch)
+
+            epoch_loss += batch_loss / batch_count
+            epoch_acc += batch_acc / batch_count
 
             optimizer.zero_grad()
-            loss.backward()
+            batch_loss.backward()
             optimizer.step()
+
+            curr_time = time.monotonic()
+            if curr_time - prev_print_time > 10:
+                eta = timer.update(epoch * batch_size + b)
+                print(f"  batch {b}/{batch_count}: loss {batch_loss.item():.4f} train acc {batch_acc:.4f} eta {eta}")
+                prev_print_time = curr_time
 
         print(f'Epoch {epoch}/{epochs}, loss {epoch_loss:.4f} acc {epoch_acc:.4f}')
 
@@ -400,7 +414,7 @@ class ConvolutionalModule(torch.nn.Module):
         self.n_convols = n_convols
         self.convs = torch.nn.ModuleList()
         for i in range(self.n_convols):
-            self.convs.append(torch.nn.Conv1d(n_features, self.n_filters[i], kernel_size=i + 2, padding=(i + 2) // 2))
+            self.convs.append(torch.nn.Conv1d(n_features, self.n_filters[i], kernel_size=i + 1, padding=(i + 1) // 2))
 
         self.linear1 = torch.nn.Linear(np.sum(self.n_filters), hidden_size)
         self.linear2 = torch.nn.Linear(hidden_size, 2)
@@ -410,7 +424,7 @@ class ConvolutionalModule(torch.nn.Module):
         # apply filters and take maximum element
         max_vals = []
         for i in range(self.n_convols):
-            conv_size = i + 2
+            conv_size = i + 1
             conv = self.convs[i](x)
             """
             max_taken = torch.max(conv, dim=2).values
@@ -460,7 +474,7 @@ def main_mean_neural(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, 
         torch.nn.Dropout(),
         torch.nn.Linear(200, 100),
         torch.nn.ReLU(),
-        torch.nn.Linear(100, 2),
+        torch.nn.Linear(100, 1),
     ).to(DEVICE)
 
     loss_func = torch.nn.CrossEntropyLoss()
@@ -476,10 +490,10 @@ def main_mean_neural(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, 
 
 def main_neural_mean(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: int, batch_size: int):
     learning_rate = 1e-3
-    ws = torch.tensor(emb.ws, device=DEVICE)
 
+    print("Constructing tensors")
+    ws = torch.tensor(emb.ws, device=DEVICE)
     x_train, y_train, z_train = construct_ws_nn(emb, tweets_train)
-    print("Split the data")
 
     # TODO try a bigger network
     model = torch.nn.Sequential(
@@ -507,9 +521,10 @@ def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: 
     learning_rate = 1e-3
     min_length = 1
     crop_length = 40
+    update_ws = False
 
     print("Constructing tensors")
-    ws = torch.tensor(emb.ws, device=DEVICE)
+    ws = torch.tensor(emb.ws, device=DEVICE, requires_grad=update_ws)
     x_train, y_train, lens_train = construct_sequential_tensors(emb, tweets_train, min_length, crop_length,
                                                                 zero_row=False)
     x_test, y_test, lens_test = construct_sequential_tensors(emb, tweets_test, min_length, crop_length, zero_row=False)
@@ -519,7 +534,7 @@ def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: 
     model.to(DEVICE)
 
     cost_func = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.Adam(itertools.chain(model.parameters(), [ws] * update_ws), lr=learning_rate)
 
     result = train(
         model, ws,
@@ -535,9 +550,9 @@ def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: 
     learning_rate = 1e-3
     min_length = 5
     crop_length = 40
-    n_features = emb.size
-    n_filters = [40, 40, 40, 40]
+    n_filters = [40, 40, 40, 40, 40]
     activation_func = torch.nn.functional.relu
+    hidden_size = 100
 
     print("Constructing tensors")
     ws = add_zero_row(torch.tensor(emb.ws)).to(DEVICE)
@@ -547,13 +562,13 @@ def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: 
                                                              zero_row=True)
 
     loss_func = torch.nn.CrossEntropyLoss()
-    n_filters, hidden_size, activation_func = parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs,
-                                                                 batch_size,
-                                                                 x_train, y_train, lens_train, x_test, y_test,
-                                                                 lens_test)
+    # n_filters, hidden_size, activation_func = parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs,
+    #                                                              batch_size,
+    #                                                              x_train, y_train, lens_train, x_test, y_test,
+    #                                                              lens_test)
 
     print("Building model")
-    model = ConvolutionalModule(n_features=n_features, n_filters=n_filters, activation_func=activation_func,
+    model = ConvolutionalModule(n_features=(emb.size), n_filters=n_filters, activation_func=activation_func,
                                 hidden_size=hidden_size)
     model.to(DEVICE)
 
@@ -591,8 +606,8 @@ def dispatch_model(selected_model: SelectedModel, emb: Embedding, tweets_train: 
 def main():
     train_count = 1_000_000
     test_count = 10_000
-    selected_model = SelectedModel.RNN
-    epochs = 5
+    selected_model = SelectedModel.NEURAL_MEAN
+    epochs = 2
     batch_size = 1000
 
     print("Loading embedding")
@@ -601,11 +616,13 @@ def main():
     print("Loading tweets")
     tweets_train, tweets_test = load_tweets_split(train_count, test_count)
 
-    print("Training model")
+    print(f"Dispatching to model {selected_model}")
     result = dispatch_model(selected_model, emb, tweets_train, tweets_test, epochs, batch_size)
 
     if result is not None:
         losses, train_accs, test_accs = result
+
+        set_plot_font_size()
 
         print("Generating final plot")
         pyplot.plot(losses, label="loss")
@@ -712,6 +729,10 @@ def manual_experimenting_main():
         "happy sad",
         "happy happy sad",
         "happy happy happy sad sad",
+        "happy",
+        "happy happy",
+        "sad",
+        "sad sad",
     ]
     wrapped_tweets = Tweets(pos=tweets, neg=[])
 
@@ -726,6 +747,6 @@ def manual_experimenting_main():
 if __name__ == '__main__':
     set_seeds()
 
-    # main()
-    # submission_main()
+    main()
+    submission_main()
     # manual_experimenting_main()
