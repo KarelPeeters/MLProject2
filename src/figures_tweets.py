@@ -6,7 +6,9 @@ from split_datasets import load_tweets_split
 from util import Tweets, set_plot_font_size
 
 
-def plot_tweet_lengths(tweets: Tweets, max_length: int, save=False):
+def plot_tweet_lengths(tweets: Tweets, max_length: int):
+    """Plot the distribution of tweet lengths separately for positive and negative tweets."""
+
     pos_lengths = list(tweet.count(" ") for tweet in tweets.pos)
     neg_lengths = list(tweet.count(" ") for tweet in tweets.neg)
 
@@ -23,10 +25,6 @@ def plot_tweet_lengths(tweets: Tweets, max_length: int, save=False):
     print(f"max_length={max_length} drops {dropped_count} ({dropped_count / total_count:.4f}) tweets")
 
 
-def word_count(string):
-    return (len(string.strip().split(" ")))
-
-
 def add_word(words, word):
     if word in words:
         words[word] = words[word] + 1
@@ -35,7 +33,9 @@ def add_word(words, word):
     return words
 
 
-def plot_word_frequencies(tweets: Tweets, save=False):
+def plot_word_frequencies(tweets: Tweets):
+    """Plot the frequency of the most common words separately for positive and negative tweets."""
+
     words_pos = dict()
     words_neg = dict()
 
@@ -71,8 +71,8 @@ def main():
 
     tweets, _ = load_tweets_split(None, 0)
 
-    plot_word_frequencies(tweets, save=True)
-    plot_tweet_lengths(tweets, max_length=40, save=True)
+    plot_word_frequencies(tweets)
+    plot_tweet_lengths(tweets, max_length=40)
 
 
 if __name__ == '__main__':

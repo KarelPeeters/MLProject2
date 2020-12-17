@@ -11,6 +11,8 @@ from util import TimeEstimator, set_plot_font_size
 
 
 def main_test_emb_size_gen_data():
+    """Train a simple model on different embedding sizes and save the resulting accuracies to disk"""
+
     train_count = 100_000
     test_count = 10_000
     epochs = 10
@@ -59,6 +61,8 @@ def main_test_emb_size_gen_data():
 
 
 def main_test_emb_size_plot():
+    """Load the calculated accuracies and plot them."""
+
     emb_sizes = np.load("../figures/emb_size/sizes.npy")
     result_test_acc = np.load("../figures/emb_size/test_acc.npy")
     result_train_acc = np.load("../figures/emb_size/train_acc.npy")

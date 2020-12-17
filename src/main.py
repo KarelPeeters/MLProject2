@@ -18,6 +18,8 @@ def calc_test_accuracy(
         x_test, y_test, lens_test,
         batch_size: int,
 ):
+    """Calculate the accuracy of a model on the given test data. Uses batching to save memory."""
+
     model.eval()
     batch_count = len(x_test) // batch_size
     test_acc = 0
@@ -43,6 +45,12 @@ def train(
         save_model_path: Optional[str] = None,
         print_update: bool = True,
 ):
+    """
+    Train a model.
+    At the end of each epochs the model if saved to save_model_path if specified.
+    Intermediate evaluation printing can be disabled by setting print_update to False.
+    """
+
     if print_update:
         print("Training")
 
@@ -63,7 +71,6 @@ def train(
         shuffle = torch.randperm(len(x_train), device=DEVICE)
 
         train_loss = 0
-        train_acc = 0
 
         prev_print_time = time.monotonic()
 
@@ -108,6 +115,8 @@ def train(
 
 
 def train_neural_mean(model, ws, x_train, y_train, z_train, loss_func, optimizer, epochs: int, batch_size: int):
+    """Similar to train but adapted to train the neural_mean model instead."""
+
     losses = np.zeros(epochs)
     train_accs = np.zeros(epochs)
 
@@ -158,6 +167,8 @@ def train_neural_mean(model, ws, x_train, y_train, z_train, loss_func, optimizer
 
 
 def calc_acc_neural_mean(emb: Embedding, tweets: Tweets, model):
+    """Calculate the accuracy of the mean-neural model."""
+
     acc_sum = 0
     tweet_count = 0
 
@@ -186,7 +197,9 @@ def calc_acc_neural_mean(emb: Embedding, tweets: Tweets, model):
     return acc_sum / tweet_count
 
 
-def construct_mean_tensors(emb: Embedding, tweets: Tweets, include_var: bool, zero_row: bool):
+def construct_mean_tensors(emb: Embedding, tweets: Tweets, include_var: bool):
+    """Construct the x, y tensors corresponding to the mean of the embedding of the words of each tweet."""
+
     total_tweet_count = len(tweets.pos) + len(tweets.neg)
 
     x = torch.empty(total_tweet_count, emb.size * (1 + include_var))
@@ -215,7 +228,9 @@ def construct_mean_tensors(emb: Embedding, tweets: Tweets, include_var: bool, ze
     return x[:next_i].to(DEVICE), y[:next_i].to(DEVICE)
 
 
-def construct_ws_nn(emb: Embedding, tweets: Tweets):
+def construct_mean_neural_tensors(emb: Embedding, tweets: Tweets):
+    """Construct the x, y, z=1/len tensors needed to train the mean_neural model"""
+
     dim = 0
     for pos, curr_tweets in [(1, tweets.pos), (0, tweets.neg)]:
         for tweet in curr_tweets:
@@ -239,23 +254,9 @@ def construct_ws_nn(emb: Embedding, tweets: Tweets):
 
             z[next_i:next_i + dimtoken, :] = 1 / dimtoken
             x[next_i:next_i + dimtoken] = torch.tensor(tokens)
-            # x[next_i:next_i+dimtoken,-1] = 1/dimtoken
             y[next_i:next_i + dimtoken] = pos
 
             next_i += dimtoken
-            # w =torch.ones(len(tokens),1)
-            # z1= torch.cat((torch.tensor(emb.ws[tokens,:]),torch.reshape(w,(-1,1))/len(tokens)),dim=1)
-            # z = torch.cat((z,torch.reshape(w,(-1,1))/len(tokens)),dim = 0)
-            # print(z)
-            # print(z.size())
-            # x = torch.cat((x,z1),dim=0) #vector with length 201 ( 200 from the glove and 1 having 1/len(tweet)
-
-            # y = torch.cat((torch.reshape(y,(-1,1)),torch.ones(len(tokens),1,dtype = torch.long)*pos),dim = 0)
-
-    # remove excess capacity
-    # print(f"Dropped {len(x) - next_i} empty tweets")
-    # x = x[:next_i]
-    # y = y[:next_i]
 
     y = torch.reshape(y, (-1, 1))
 
@@ -263,9 +264,13 @@ def construct_ws_nn(emb: Embedding, tweets: Tweets):
 
 
 def construct_sequential_tensors(emb: Embedding, tweets: Tweets, min_length: int, crop_length: int, zero_row: bool):
+    """
+    Construct the x, y, len tensors necessary to train the CNN and RNN models.
+    x has shape (tweet_count, crop_length) and contains the embedding index for the words of each tweet, padded with zeros
+    """
+
     total_tweet_count = len(tweets.pos) + len(tweets.neg)
 
-    # todo maybe store index in x instead of expanded embedding
     x = torch.zeros(total_tweet_count, crop_length, dtype=torch.long)
     y = torch.empty(total_tweet_count, dtype=torch.long)
     lens = torch.empty(total_tweet_count, dtype=torch.long)
@@ -302,7 +307,8 @@ def construct_sequential_tensors(emb: Embedding, tweets: Tweets, min_length: int
 
 def parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs, batch_size,
                        x_train, y_train, lens_train, x_test, y_test, lens_test):
-    # TODO: Find best dropout_rate and best batch_size!
+    """Train lots of CNN with different hyperparameters to find the best possible accuracy"""
+
     filters = np.arange(start=5, stop=35, step=10, dtype=int)
     hidden_sizes = np.array([10, 20, 50, 100])
 
@@ -361,17 +367,21 @@ def parameter_scan_cnn(n_features, loss_func, learning_rate, ws, epochs, batch_s
 
 
 class RecurrentModel(torch.nn.Module):
+    """The architecture of the RNN model."""
+
     def __init__(self, emb_size: int):
         super().__init__()
 
         HIDDEN_SIZE = 400
 
+        # LSTM cell
         self.lstm = torch.nn.LSTM(
             input_size=emb_size,
             hidden_size=HIDDEN_SIZE, num_layers=3,
             bidirectional=False,
         )
 
+        # Sequential head
         self.seq = torch.nn.Sequential(
             torch.nn.Dropout(),
             torch.nn.Linear(HIDDEN_SIZE * (1 + self.lstm.bidirectional), 200),
@@ -395,6 +405,8 @@ class RecurrentModel(torch.nn.Module):
 
 
 class ConvolutionalModule(torch.nn.Module):
+    """The architecture of the CNN model"""
+
     def __init__(
             self,
             n_features, n_convols=3, n_filters=None, n_filters_const=10,
@@ -460,6 +472,8 @@ class ConvolutionalModule(torch.nn.Module):
 
 
 def main_mean_neural(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: int, batch_size: int):
+    """Train the main_neural model"""
+
     learning_rate = 1e-3
     include_var = False
 
@@ -489,11 +503,13 @@ def main_mean_neural(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, 
 
 
 def main_neural_mean(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: int, batch_size: int):
+    """Train the neural_mean model"""
+
     learning_rate = 1e-3
 
     print("Constructing tensors")
     ws = torch.tensor(emb.ws, device=DEVICE)
-    x_train, y_train, z_train = construct_ws_nn(emb, tweets_train)
+    x_train, y_train, z_train = construct_mean_neural_tensors(emb, tweets_train)
 
     # TODO try a bigger network
     model = torch.nn.Sequential(
@@ -518,6 +534,8 @@ def main_neural_mean(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, 
 
 
 def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: int, batch_size: int):
+    """Train the RNN model"""
+
     learning_rate = 1e-3
     min_length = 1
     crop_length = 40
@@ -547,6 +565,7 @@ def main_rnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: 
 
 
 def main_cnn(emb: Embedding, tweets_train: Tweets, tweets_test: Tweets, epochs: int, batch_size: int):
+    """Train the CNN model"""
     learning_rate = 1e-3
     min_length = 5
     crop_length = 40
@@ -591,6 +610,8 @@ class SelectedModel(Enum):
 
 def dispatch_model(selected_model: SelectedModel, emb: Embedding, tweets_train: Tweets, tweets_test: Tweets,
                    epochs: int, batch_size: int):
+    """Train the model selected by the selected_model parameter"""
+
     if selected_model == SelectedModel.CNN:
         return main_cnn(emb, tweets_train, tweets_test, epochs, batch_size)
     elif selected_model == SelectedModel.RNN:
@@ -603,7 +624,7 @@ def dispatch_model(selected_model: SelectedModel, emb: Embedding, tweets_train: 
         assert False, f"Unexpected model {selected_model}"
 
 
-def main():
+def main_train():
     train_count = 1_000_000
     test_count = 10_000
     selected_model = SelectedModel.NEURAL_MEAN
@@ -635,6 +656,8 @@ def main():
 
 
 def save_submission(model, emb: Embedding):
+    """Actually apply the model to the submission dataset"""
+
     model.eval()
     crop_length = 40
 
@@ -693,6 +716,8 @@ def submission_main():
 
 
 def manual_experimenting_main():
+    """Some manual expiration with the trained model"""
+
     print("Loading embedding")
     emb = load_embedding(10_000, 0, True, 200)
     ws = torch.tensor(emb.ws, device=DEVICE)
@@ -747,6 +772,6 @@ def manual_experimenting_main():
 if __name__ == '__main__':
     set_seeds()
 
-    main()
+    # main_train()
     submission_main()
     # manual_experimenting_main()

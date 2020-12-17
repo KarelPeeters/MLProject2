@@ -11,6 +11,7 @@ from util import TimeEstimator
 
 
 def get_file_paths(max_word_count: int, context_dist: Optional[int], punctuation: bool, emb_size: int):
+    """Returns the file paths to the word list, cooc and weight files for the given settings."""
     context_dist = context_dist or 0
 
     append = str(max_word_count)
@@ -47,12 +48,15 @@ def train_embedding_from_cooc(
         device: str, optimizer: Callable[[List[torch.Tensor]], Optimizer],
         n_max: int = 100, alpha: float = 3 / 4,
 ):
-    """Train a GloVe embedding using batched SGD. `size` is the size of the resulting embedding."""
+    """Train a GloVe embedding based on the given cooc matrix. `size` is the size of the resulting embedding."""
+
+    # word and context vectors
     wx = torch.normal(0, 1 / size, size=(word_count, size), device=device, requires_grad=True)
     wy = torch.normal(0, 1 / size, size=(word_count, size), device=device, requires_grad=True)
 
     optimizer = optimizer([wx, wy])
 
+    # interpret cooc matrix
     cooc = cooc.astype(dtype=int)
     ix = torch.tensor(cooc[:, 0], dtype=torch.long, device=device)
     iy = torch.tensor(cooc[:, 1], dtype=torch.long, device=device)
@@ -67,21 +71,20 @@ def train_embedding_from_cooc(
         avg_cost = 0
 
         for b in range(batch_count):
+            # batching
             i_batch = shuffle[b * batch_size:(b + 1) * batch_size]
 
             ix_batch = ix[i_batch]
             iy_batch = iy[i_batch]
             n_batch = n[i_batch]
 
+            # core of the algorithm, calculate the weighed cost
             log_n = torch.log(n_batch)
             fn = torch.min(torch.ones_like(n_batch), (n_batch / n_max) ** alpha)
 
             x, y = wx[ix_batch, :], wy[iy_batch, :]
             log_n_pred = torch.sum(x * y, dim=1)
             cost = torch.mean(fn * (log_n - log_n_pred) ** 2)
-
-            if cost.item() != cost.item():
-                print("Nan!")
 
             avg_cost += cost.item() / batch_count
 
@@ -94,6 +97,7 @@ def train_embedding_from_cooc(
 
         print(f"epoch {epoch}, cost {avg_cost}")
 
+    # sum word and context vectors as recommended by paper, then normalize
     result = (wx + wy).detach().cpu().numpy()
     result /= np.linalg.norm(result, axis=1)[:, np.newaxis]
     return result
@@ -106,6 +110,8 @@ def create_embedding(
         batch_size: int, epochs: int,
         n_max: int, alpha: float,
 ):
+    """Construct a cooc matrix from the given file of tweets, then train a GloVe embedding based on it."""
+
     word_file, cooc_file, w_file = get_file_paths(max_word_count, context_dist, punctuation, emb_size)
 
     print("Constructing cooc")
@@ -136,22 +142,28 @@ def create_embedding(
 
 @dataclass
 class Embedding:
+    """A fully trained, ready to use word embedding."""
+
     words: [str]
     word_dict: Dict[str, int]
     ws: np.ndarray
     size: int
 
     def embed(self, word: str):
+        """Find the given word in the embedding and return the corresponding vector"""
         index = self.word_dict[word]
         return self.ws[index, :]
 
     def find(self, w: np.ndarray, n: int):
+        """Find the n closest embedding vectors to the given vector and return the corresponding words"""
         dist = np.dot(self.ws, w)
         max_index = np.argsort(-dist)[:n]
         return self.words[max_index]
 
 
 def load_embedding(max_word_count: int, context_dist: Optional[int], punctuation: bool, emb_size: int):
+    """Load the Embedding with the given parameters"""
+
     word_file, _, w_file = get_file_paths(max_word_count, context_dist, punctuation, emb_size)
 
     with open(word_file) as f:

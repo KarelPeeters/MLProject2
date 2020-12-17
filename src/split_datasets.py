@@ -8,8 +8,8 @@ BASE = "../data/split-datasets"
 ALL_TRAIN_TWEETS_PATH = BASE + "/train_all.txt"
 
 
-def load_y(y: str) -> [str]:
-    # load all tweets of type y, deduplicate and shuffle them
+def _load_y(y: str) -> [str]:
+    """Load all tweets of type y, deduplicate and shuffle them, intended as a private function."""
     with open(f"../data/twitter-datasets/train_{y}_full.txt", encoding="utf-8") as f:
         all_tweets = f.readlines()
 
@@ -21,6 +21,11 @@ def load_y(y: str) -> [str]:
 
 
 def create_split_files(force: bool, write_files: bool = True):
+    """
+    Load the entire dataset and split it into separate train and test datasets. These are then saved to disk so the
+    same split can be used throughout the entire process.
+    """
+
     if os.path.exists(BASE) and not force:
         print("Skip creating split files")
         return
@@ -31,8 +36,8 @@ def create_split_files(force: bool, write_files: bool = True):
     print("Creating split files")
     os.makedirs(BASE, exist_ok=True)
 
-    pos = load_y("pos")
-    neg = load_y("neg")
+    pos = _load_y("pos")
+    neg = _load_y("neg")
 
     total_count = min(len(pos), len(neg))
     left_count = total_count - train_count - test_count
@@ -60,6 +65,7 @@ def create_split_files(force: bool, write_files: bool = True):
 
 
 def load_tweets_split(train_count: Optional[int], test_count: Optional[int]) -> (Tweets, Tweets):
+    """Load the train and test datasets, creating the split if ran for the first time."""
     create_split_files(force=False)
 
     result = []
@@ -75,7 +81,7 @@ def load_tweets_split(train_count: Optional[int], test_count: Optional[int]) -> 
                     tweets.append(tweet.strip())
 
             random.shuffle(tweets)
-            assert part_count is None or len(tweets) == part_count,\
+            assert part_count is None or len(tweets) == part_count, \
                 f"Not enough tweets, need {part_count} but got {len(tweets)}"
             args[y] = tweets
 
